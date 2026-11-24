@@ -964,9 +964,24 @@ export class ChayxonaDB {
     this.withImmediateTx(() => {
       const existing = this.db
         .prepare('SELECT * FROM writer_leases WHERE room_id = ?')
-        .get(roomId) as { task_id: string; holder_agent: string } | undefined;
+        .get(roomId) as { task_id: string; holder_agent: string; pid: number } | undefined;
       if (existing) {
-        throw new Error(`Writer lease already held for room ${roomId} by ${existing.holder_agent} (task ${existing.task_id}).`);
+        let isAlive = false;
+        try {
+          if (typeof existing.pid === 'number' && existing.pid > 0) {
+            process.kill(existing.pid, 0);
+            isAlive = true;
+          }
+        } catch {
+          isAlive = false;
+        }
+        if (isAlive && existing.pid !== process.pid) {
+          throw new Error(
+            `Writer lease already held for room ${roomId} by ${existing.holder_agent} (task ${existing.task_id}, pid ${existing.pid}).`,
+          );
+        }
+        // Stale lease from a dead process or re-acquisition by same process: reclaim it cleanly
+        this.db.prepare('DELETE FROM writer_leases WHERE room_id = ?').run(roomId);
       }
       this.db
         .prepare(

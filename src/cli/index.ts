@@ -172,7 +172,18 @@ program
     db.createRoom(room);
 
     const service = new RoomService(room, db, activeAdapters, redactor);
-    const taskService = new TaskService(room, dataDir, db, activeAdapters, redactor, config.checks);
+    const taskService = new TaskService(
+      room,
+      dataDir,
+      db,
+      activeAdapters,
+      redactor,
+      config.checks,
+      {
+        onStatus: (text) => service.emit('notice', { type: 'status', text }),
+        onAgentEvent: (ev) => service.emit('agentEvent', ev),
+      },
+    );
     let cleanedUp = false;
     const isTty = Boolean(process.stdout.isTTY);
     if (isTty) {
@@ -184,9 +195,27 @@ program
       if (isTty) {
         process.stdout.write('\x1b[?1049l');
       }
-      db.releaseWriterLease(roomId);
-      lock.release();
-      db.close();
+      try {
+        service.stop('all');
+        taskService.stop();
+      } catch {
+        // best effort
+      }
+      try {
+        db.releaseWriterLease(roomId);
+      } catch {
+        // best effort
+      }
+      try {
+        lock.release();
+      } catch {
+        // best effort
+      }
+      try {
+        db.close();
+      } catch {
+        // best effort
+      }
     };
 
     const instance = render(
@@ -413,8 +442,19 @@ program
     const { activeAdapters } = await resolveReadyAdapters(room.agents, allAdapters, room.solo);
 
     const { config } = loadProjectConfig(room.repoPath);
-    const taskService = new TaskService(room, dataDir, db, activeAdapters, redactor, config.checks);
     const service = new RoomService(room, db, activeAdapters, redactor);
+    const taskService = new TaskService(
+      room,
+      dataDir,
+      db,
+      activeAdapters,
+      redactor,
+      config.checks,
+      {
+        onStatus: (text) => service.emit('notice', { type: 'status', text }),
+        onAgentEvent: (ev) => service.emit('agentEvent', ev),
+      },
+    );
     const initialMessages = db.listMessages(roomId, { includeSealed: false });
     const initialFindings = db.listVisibleFindings(roomId);
 
@@ -429,9 +469,27 @@ program
       if (isTty) {
         process.stdout.write('\x1b[?1049l');
       }
-      db.releaseWriterLease(roomId);
-      lock.release();
-      db.close();
+      try {
+        service.stop('all');
+        taskService.stop();
+      } catch {
+        // best effort
+      }
+      try {
+        db.releaseWriterLease(roomId);
+      } catch {
+        // best effort
+      }
+      try {
+        lock.release();
+      } catch {
+        // best effort
+      }
+      try {
+        db.close();
+      } catch {
+        // best effort
+      }
     };
 
     const instance = render(

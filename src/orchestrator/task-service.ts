@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentAdapter } from '../adapters/contract.js';
 import { parseFindingsFromReply } from '../domain/findings.js';
 import type {
+  AgentEvent,
   AgentId,
   ApprovalRecord,
   CheckRecord,
@@ -51,10 +52,13 @@ import {
 
 export interface TaskEventCallbacks {
   onStatus?: (text: string) => void;
+  onAgentEvent?: (event: AgentEvent) => void;
+  onTaskUpdated?: (task: TaskRecord) => void;
 }
 
 export class TaskService {
   private readonly worktrees = new Map<string, WorktreeHandle>();
+  private readonly activeControllers = new Map<string, AbortController>();
 
   constructor(
     private readonly room: RoomRecord,
@@ -65,6 +69,24 @@ export class TaskService {
     private readonly checkCommands: readonly string[] = [],
     private readonly callbacks: TaskEventCallbacks = {},
   ) {}
+
+  isRunning(): boolean {
+    return this.activeControllers.size > 0;
+  }
+
+  stop(): void {
+    for (const ac of this.activeControllers.values()) {
+      ac.abort();
+    }
+    this.activeControllers.clear();
+    this.emitStatus('Task service: cancelled active operations.');
+  }
+
+  private updateTask(taskId: string, patch: Partial<TaskRecord>): TaskRecord {
+    const updated = this.db.updateTask(taskId, patch);
+    this.callbacks.onTaskUpdated?.(updated);
+    return updated;
+  }
 
   getLatestTask(): TaskRecord | null {
     return this.db.getLatestTask(this.room.id);
@@ -149,7 +171,7 @@ export class TaskService {
     taskId: string,
     rejectionReason: string | null,
   ): Promise<{ task: TaskRecord; approval: ApprovalRecord }> {
-    let task = this.db.updateTask(taskId, { state: 'PLANNING' });
+    let task = this.updateTask(taskId, { state: 'PLANNING' });
     this.emitStatus(`[${task.id}] PLANNING v${task.planVersion + 1} with ${task.implementer} (read-only)...`);
 
     const prompt = [
@@ -166,7 +188,7 @@ export class TaskService {
     const planHash = sha256(planText);
 
     this.db.invalidateApprovals(task.id, 'plan');
-    task = this.db.updateTask(task.id, {
+    task = this.updateTask(task.id, {
       state: 'AWAITING_PLAN_APPROVAL',
       planVersion: nextVersion,
       planText,
@@ -218,7 +240,7 @@ export class TaskService {
     // Otherwise abort and cancel task completely
     this.db.invalidateApprovals(task.id, 'plan');
     this.db.invalidateApprovals(task.id, 'final');
-    const cancelled = this.db.updateTask(task.id, { state: 'CANCELLED' });
+    const cancelled = this.updateTask(task.id, { state: 'CANCELLED' });
 
     const handle = this.worktrees.get(task.id);
     if (handle) {
@@ -247,7 +269,7 @@ export class TaskService {
       throw new Error(`Task ${task.id} is in state ${task.state}, not FAILED.`);
     }
 
-    const updated = this.db.updateTask(task.id, {
+    const updated = this.updateTask(task.id, {
       maxRevisions: task.maxRevisions + 1,
     });
     this.emitStatus(`[${task.id}] Steered by human. Resuming implementation with +1 revision budget (${updated.maxRevisions} max)...`);
@@ -297,7 +319,7 @@ export class TaskService {
       throw new Error(`Final approval ${approval.id} invalidated because revision changed.`);
     }
     this.db.resolveApproval(approval.id, 'approved', null);
-    const updated = this.db.updateTask(task.id, { state: 'READY_TO_APPLY' });
+    const updated = this.updateTask(task.id, { state: 'READY_TO_APPLY' });
     this.emitStatus(`[${task.id}] Approved! Run \`/apply\` to apply patch to original repo.`);
     return { task: updated, revision: rev };
   }
@@ -323,7 +345,7 @@ export class TaskService {
 
     while (true) {
       // 1. IMPLEMENTING (exclusive single-writer lease in isolated worktree)
-      task = this.db.updateTask(task.id, { state: 'IMPLEMENTING' });
+      task = this.updateTask(task.id, { state: 'IMPLEMENTING' });
       this.emitStatus(
         `[${task.id}] IMPLEMENTING (rev ${task.revisionCount + 1}) with ${task.implementer} in isolated worktree...`,
       );
@@ -347,13 +369,13 @@ export class TaskService {
       }
 
       // 2. VERIFYING (immutable snapshot + allowlisted checks)
-      task = this.db.updateTask(task.id, { state: 'VERIFYING' });
+      task = this.updateTask(task.id, { state: 'VERIFYING' });
       const revision = captureWorktreeRevision(task.id, handle);
       this.db.createRevision(revision);
       // Any previous final approval is now invalid because a new revision was produced
       this.db.invalidateApprovals(task.id, 'final');
 
-      task = this.db.updateTask(task.id, {
+      task = this.updateTask(task.id, {
         activeRevisionId: revision.id,
         revisionCount: task.revisionCount + 1,
       });
@@ -385,7 +407,7 @@ export class TaskService {
           );
           continue;
         } else {
-          task = this.db.updateTask(task.id, { state: 'FAILED' });
+          task = this.updateTask(task.id, { state: 'FAILED' });
           this.emitStatus(
             `[${task.id}] Checks failed and revision budget exhausted (${task.revisionCount}/${task.maxRevisions}). Task FAILED.`,
           );
@@ -394,7 +416,7 @@ export class TaskService {
       }
 
       // 3. REVIEWING (strict read-only reviewers against pinned revision, only after checks pass)
-      task = this.db.updateTask(task.id, { state: 'REVIEWING' });
+      task = this.updateTask(task.id, { state: 'REVIEWING' });
       const allFindings: FindingRecord[] = [];
       let reviewerFailed = false;
 
@@ -434,7 +456,7 @@ export class TaskService {
 
       // AC-08: unavailable/failed required reviewer -> INCOMPLETE / FAILED, never automatic PASS
       if (reviewerFailed) {
-        task = this.db.updateTask(task.id, { state: 'FAILED' });
+        task = this.updateTask(task.id, { state: 'FAILED' });
         return { task, revision, checks, findings: allFindings };
       }
 
@@ -450,13 +472,13 @@ export class TaskService {
       }
 
       if (blocking.length > 0) {
-        task = this.db.updateTask(task.id, { state: 'FAILED' });
+        task = this.updateTask(task.id, { state: 'FAILED' });
         this.emitStatus(`[${task.id}] Revision budget exhausted (${task.revisionCount}/${task.maxRevisions}) with blocking findings.`);
         return { task, revision, checks, findings: allFindings };
       }
 
       // 4. Passed review -> AWAITING_FINAL_APPROVAL bound to exact revision.diffHash
-      task = this.db.updateTask(task.id, { state: 'AWAITING_FINAL_APPROVAL' });
+      task = this.updateTask(task.id, { state: 'AWAITING_FINAL_APPROVAL' });
       const finalApproval: ApprovalRecord = {
         id: `final-${revision.id.slice(-4)}`,
         taskId: task.id,
@@ -501,7 +523,7 @@ export class TaskService {
       const pendingFinal = this.db.findPendingApproval(task.id, 'final');
       if (pendingFinal && pendingFinal.subjectHash === rev.diffHash) {
         this.db.resolveApproval(pendingFinal.id, 'approved', 'Auto-approved via /apply');
-        task = this.db.updateTask(task.id, { state: 'READY_TO_APPLY' });
+        task = this.updateTask(task.id, { state: 'READY_TO_APPLY' });
       }
     }
 
@@ -515,7 +537,7 @@ export class TaskService {
     }
 
     applyApprovedRevision(this.room.repoPath, rev);
-    const done = this.db.updateTask(task.id, { state: 'COMPLETED' });
+    const done = this.updateTask(task.id, { state: 'COMPLETED' });
 
     // Clean up worktree directory and prune git metadata
     const handle = this.worktrees.get(task.id);
@@ -540,30 +562,37 @@ export class TaskService {
   ): Promise<string> {
     const adapter = this.adapters.get(agentId);
     if (!adapter) throw new Error(`Adapter "${agentId}" not available.`);
+    const turnId = randomUUID();
     const ac = new AbortController();
+    this.activeControllers.set(turnId, ac);
     let finalText = '';
     let completed = false;
     let failMsg = '';
 
-    for await (const ev of adapter.run(
-      {
-        roomId: this.room.id,
-        roundId: 0,
-        turnId: randomUUID(),
-        agentId,
-        cwd,
-        prompt,
-        timeoutMs: this.room.turnTimeoutMs,
-        permissions,
-      },
-      ac.signal,
-    )) {
-      if (ev.type === 'turn.completed') {
-        finalText = this.redactor.redact(ev.text);
-        completed = true;
-      } else if (ev.type === 'turn.failed') {
-        failMsg = this.redactor.redact(ev.message);
+    try {
+      for await (const ev of adapter.run(
+        {
+          roomId: this.room.id,
+          roundId: 0,
+          turnId,
+          agentId,
+          cwd,
+          prompt,
+          timeoutMs: this.room.turnTimeoutMs,
+          permissions,
+        },
+        ac.signal,
+      )) {
+        this.callbacks.onAgentEvent?.(ev);
+        if (ev.type === 'turn.completed') {
+          finalText = this.redactor.redact(ev.text);
+          completed = true;
+        } else if (ev.type === 'turn.failed') {
+          failMsg = this.redactor.redact(ev.message);
+        }
       }
+    } finally {
+      this.activeControllers.delete(turnId);
     }
 
     if (!completed) {

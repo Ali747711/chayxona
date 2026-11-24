@@ -65,6 +65,13 @@ export type RecoveryState =
       roundId: number;
       topic: string;
       completedAgents: AgentId[];
+    }
+  | {
+      kind: 'incomplete_r2';
+      roundId: number;
+      topic: string;
+      completedAgents: AgentId[];
+      interruptedAgents: AgentId[];
     };
 
 export class RoomService extends EventEmitter {
@@ -141,6 +148,21 @@ export class RoomService extends EventEmitter {
         roundId: latest.id,
         topic: latest.topic,
         completedAgents,
+      };
+    }
+
+    if (latest.phase === 'cross_exam_r2') {
+      const r1Turns = this.db.listRoundTurns(this.room.id, latest.id, 'blind_r1');
+      const completedR1Agents = r1Turns.filter((t) => t.status === 'done').map((t) => t.agentId);
+      const r2Turns = this.db.listRoundTurns(this.room.id, latest.id, 'cross_exam_r2');
+      const completedR2Agents = r2Turns.filter((t) => t.status === 'done').map((t) => t.agentId);
+      const interruptedAgents = completedR1Agents.filter((a) => !completedR2Agents.includes(a));
+      return {
+        kind: 'incomplete_r2',
+        roundId: latest.id,
+        topic: latest.topic,
+        completedAgents: completedR1Agents,
+        interruptedAgents,
       };
     }
 
@@ -258,7 +280,7 @@ export class RoomService extends EventEmitter {
       throw new Error('Cannot recover while another round is running.');
     }
     const state = this.inspectRecoveryState();
-    if (!state || state.kind !== 'pending_r2') {
+    if (!state || (state.kind !== 'pending_r2' && state.kind !== 'incomplete_r2')) {
       throw new Error('No revealed round waiting for Cross-Exam R2.');
     }
     const budget = this.getBudgetStatus(state.completedAgents.length);

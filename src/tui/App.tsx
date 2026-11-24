@@ -96,12 +96,15 @@ export const App: React.FC<AppProps> = ({
         meta: `R${recovery.roundId} INTERRUPTED`,
         body: `Blind Round 1 was interrupted (completed: ${recovery.completedAgents.join(', ') || 'none'}; interrupted: ${recovery.interruptedAgents.join(', ')}).\nCompleted takes remain sealed. Run \`/recover retry\` to retry interrupted agents or \`/recover unseal\` to reveal partial takes.`,
       });
-    } else if (recovery?.kind === 'pending_r2') {
+    } else if (recovery?.kind === 'pending_r2' || recovery?.kind === 'incomplete_r2') {
+      const isInterruptedR2 = recovery.kind === 'incomplete_r2';
       intro.push({
         key: 'recovery-banner',
         sender: 'RECOVERY',
-        meta: `R${recovery.roundId} PENDING R2`,
-        body: `Round 1 was revealed before exit. Run \`/recover r2\` to run Cross-Exam Round 2 with ${recovery.completedAgents.join(', ')}.`,
+        meta: `R${recovery.roundId} ${isInterruptedR2 ? 'INTERRUPTED R2' : 'PENDING R2'}`,
+        body: isInterruptedR2
+          ? `Cross-Exam Round 2 was interrupted before completion. Run \`/recover r2\` to resume Cross-Exam Round 2 with ${recovery.completedAgents.join(', ')}.`
+          : `Round 1 was revealed before exit. Run \`/recover r2\` to run Cross-Exam Round 2 with ${recovery.completedAgents.join(', ')}.`,
       });
     }
     for (const m of initialMessages) {
@@ -133,6 +136,7 @@ export const App: React.FC<AppProps> = ({
   });
   const [livePreview, setLivePreview] = useState<Record<string, string>>({});
   const previewBufRef = useRef<Record<string, string>>({});
+  const maxScrollRef = useRef(0);
   const previewDirtyRef = useRef(false);
   const seqRef = useRef(0);
 
@@ -286,7 +290,7 @@ export const App: React.FC<AppProps> = ({
         return;
       }
       if (key.pageUp && !showFindings) {
-        setScrollOffset((prev) => prev + 6);
+        setScrollOffset((prev) => Math.min(maxScrollRef.current, prev + 6));
         return;
       }
       if (key.pageDown && !showFindings) {
@@ -298,8 +302,13 @@ export const App: React.FC<AppProps> = ({
         return;
       }
       if (key.ctrl && _ch === 'c') {
-        if (service.isRunning()) {
+        if (service.isRunning() || Boolean(taskService?.isRunning())) {
           service.stop('all');
+          taskService?.stop();
+          setNotice({
+            type: 'warning',
+            text: 'Stopping active turns and tasks... Press Ctrl+C again to exit immediately.',
+          });
         } else {
           onExitCleanup();
           exit();
@@ -319,6 +328,7 @@ export const App: React.FC<AppProps> = ({
 
     if (cmd.kind === 'quit') {
       service.stop('all');
+      taskService?.stop();
       onExitCleanup();
       exit();
       return;
@@ -472,6 +482,9 @@ export const App: React.FC<AppProps> = ({
     }
     if (cmd.kind === 'stop') {
       service.stop(cmd.target);
+      if (cmd.target === 'all') {
+        taskService?.stop();
+      }
       return;
     }
     if (cmd.kind === 'budget') {
@@ -740,6 +753,7 @@ export const App: React.FC<AppProps> = ({
   }, [staticItems, cols]);
 
   const maxScroll = Math.max(0, allTranscriptRows.length - viewportRows);
+  maxScrollRef.current = maxScroll;
   const clampedScroll = Math.min(scrollOffset, maxScroll);
   const endIdx = allTranscriptRows.length - clampedScroll;
   const startIdx = Math.max(0, endIdx - viewportRows);
@@ -906,6 +920,16 @@ export const App: React.FC<AppProps> = ({
             theme={theme}
             maxVisible={isShort ? 4 : 6}
             onClose={() => setShowFindings(false)}
+            onAction={(action, finding) => {
+              if (action === 'task') {
+                const loc = finding.file ? ` (${finding.file}${finding.line ? `:${finding.line}` : ''})` : '';
+                setInput(`/task Fix ${finding.canonicalId}${loc}: ${finding.summary}`);
+              } else if (action === 'debate') {
+                const loc = finding.file ? ` in ${finding.file}` : '';
+                setInput(`/debate Address ${finding.canonicalId}${loc}: ${finding.summary}`);
+              }
+              setShowFindings(false);
+            }}
           />
         ) : null}
 
