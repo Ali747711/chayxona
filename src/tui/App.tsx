@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -113,6 +113,7 @@ export const App: React.FC<AppProps> = ({
   const [input, setInput] = useState('');
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState<number | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
   const [showFindings, setShowFindings] = useState(false);
   const [findings, setFindings] = useState<FindingRecord[]>(initialFindings);
   const [round, setRound] = useState<RoundRecord | null>(service.getActiveRound());
@@ -132,6 +133,7 @@ export const App: React.FC<AppProps> = ({
 
   const pushSystemItem = (body: string, label = 'SYSTEM', isDiff = false): void => {
     seqRef.current += 1;
+    setScrollOffset(0);
     setStaticItems((prev) => [
       ...prev,
       { key: `sys-${Date.now()}-${seqRef.current}`, sender: label, meta: '', body, isDiff },
@@ -160,6 +162,7 @@ export const App: React.FC<AppProps> = ({
 
   useEffect(() => {
     const onMessage = (msg: MessageRecord): void => {
+      setScrollOffset(0);
       setStaticItems((prev) => [
         ...prev,
         {
@@ -275,6 +278,14 @@ export const App: React.FC<AppProps> = ({
           setHistoryIdx(nextIdx);
           setInput(inputHistory[nextIdx] ?? '');
         }
+        return;
+      }
+      if (key.pageUp && !showFindings) {
+        setScrollOffset((prev) => prev + 6);
+        return;
+      }
+      if (key.pageDown && !showFindings) {
+        setScrollOffset((prev) => Math.max(0, prev - 6));
         return;
       }
       if (key.ctrl && _ch === 'u') {
@@ -563,53 +574,109 @@ export const App: React.FC<AppProps> = ({
   const noticeColor =
     notice?.type === 'error' ? theme.error : notice?.type === 'warning' ? theme.warning : theme.muted;
 
+  // Build flattened visual lines for clean full-viewport scrolling above the fixed bottom prompt dock
+  const dockReserveRows = showFindings ? (isShort ? 11 : 14) : isBlind ? 8 : suggestions.length > 0 ? 7 : 6;
+  const viewportRows = Math.max(4, rows - dockReserveRows);
+
+  type ViewportRow =
+    | { key: string; kind: 'header'; sender: string; meta: string }
+    | { key: string; kind: 'diff'; line: string }
+    | { key: string; kind: 'md'; line: string }
+    | { key: string; kind: 'spacer' };
+
+  const allTranscriptRows = useMemo<ViewportRow[]>(() => {
+    const out: ViewportRow[] = [];
+    const maxLineWidth = Math.max(30, cols - 6);
+    for (const item of staticItems) {
+      out.push({ key: `${item.key}-h`, kind: 'header', sender: item.sender, meta: item.meta });
+      const rawLines = item.body.split('\n');
+      let lineIdx = 0;
+      for (const rawLine of rawLines) {
+        if (rawLine.length <= maxLineWidth) {
+          out.push({
+            key: `${item.key}-l-${lineIdx++}`,
+            kind: item.isDiff ? 'diff' : 'md',
+            line: rawLine,
+          });
+        } else {
+          for (let pos = 0; pos < rawLine.length; pos += maxLineWidth) {
+            out.push({
+              key: `${item.key}-l-${lineIdx++}`,
+              kind: item.isDiff ? 'diff' : 'md',
+              line: rawLine.slice(pos, pos + maxLineWidth),
+            });
+          }
+        }
+      }
+      out.push({ key: `${item.key}-sp`, kind: 'spacer' });
+    }
+    return out;
+  }, [staticItems, cols]);
+
+  const maxScroll = Math.max(0, allTranscriptRows.length - viewportRows);
+  const clampedScroll = Math.min(scrollOffset, maxScroll);
+  const endIdx = allTranscriptRows.length - clampedScroll;
+  const startIdx = Math.max(0, endIdx - viewportRows);
+  const visibleRows = allTranscriptRows.slice(startIdx, endIdx);
+
   return (
-    <Box flexDirection="column">
-      {/* 1. Immutable completed transcript in standard terminal buffer */}
-      <Static items={staticItems}>
-        {(item) => {
-          const senderColor = theme.senderColor(item.sender);
-          return (
-            <Box key={item.key} flexDirection="column" paddingX={2} marginTop={1}>
-              <Box gap={1}>
-                <Text bold color={senderColor}>
-                  [{item.sender}]
-                </Text>
-                {item.meta ? <Text color={theme.muted}>({item.meta})</Text> : null}
-              </Box>
-              {item.isDiff ? (
-                <Box flexDirection="column" paddingLeft={2}>
-                  {item.body.split('\n').map((line, i) => (
-                    <Text key={i} color={theme.diffLineColor(line)}>
-                      {line}
+    <Box flexDirection="column" height={rows} width={cols}>
+      {/* 1. Main viewport area: centered WelcomeCard when fresh, or scrollable transcript */}
+      <Box
+        flexGrow={1}
+        flexDirection="column"
+        justifyContent={staticItems.length === 0 ? 'center' : 'flex-end'}
+        overflow="hidden"
+      >
+        {staticItems.length === 0 ? (
+          <WelcomeCard
+            roomId={service.room.id}
+            repoPath={service.room.repoPath}
+            agents={service.room.agents}
+            getRole={(a) => service.getRole(a)}
+            dirtyRepo={dirtyRepoWarning}
+            cols={cols}
+            theme={theme}
+          />
+        ) : (
+          <Box flexDirection="column" paddingX={2}>
+            {startIdx > 0 ? (
+              <Text color={theme.muted} wrap="truncate-end">
+                --- {startIdx} earlier line(s) [PgUp / PgDn to scroll] ---
+              </Text>
+            ) : null}
+            {visibleRows.map((row) => {
+              if (row.kind === 'spacer') return <Text key={row.key}> </Text>;
+              if (row.kind === 'header') {
+                return (
+                  <Text key={row.key} wrap="truncate-end">
+                    <Text bold color={theme.senderColor(row.sender)}>
+                      [{row.sender}]
                     </Text>
-                  ))}
+                    {row.meta ? <Text color={theme.muted}> ({row.meta})</Text> : null}
+                  </Text>
+                );
+              }
+              if (row.kind === 'diff') {
+                return (
+                  <Text key={row.key} color={theme.diffLineColor(row.line)} wrap="truncate-end">
+                    {'  '}
+                    {row.line}
+                  </Text>
+                );
+              }
+              return (
+                <Box key={row.key} paddingLeft={2}>
+                  <MarkdownText text={row.line} theme={theme} />
                 </Box>
-              ) : (
-                <Box paddingLeft={2}>
-                  <MarkdownText text={item.body} theme={theme} />
-                </Box>
-              )}
-            </Box>
-          );
-        }}
-      </Static>
+              );
+            })}
+          </Box>
+        )}
+      </Box>
 
-      {/* Centered Welcome Card when room is fresh (disappears cleanly once conversation starts) */}
-      {staticItems.length === 0 && !service.isRunning() ? (
-        <WelcomeCard
-          roomId={service.room.id}
-          repoPath={service.room.repoPath}
-          agents={service.room.agents}
-          getRole={(a) => service.getRole(a)}
-          dirtyRepo={dirtyRepoWarning}
-          cols={cols}
-          theme={theme}
-        />
-      ) : null}
-
-      {/* 2. Dynamic bottom dock (height-budgeted, padded, responsive <80 cols / <24 rows) */}
-      <Box flexDirection="column" marginX={1} marginTop={1} borderStyle="single" borderColor={frameBorderColor} paddingX={1}>
+      {/* 2. Fixed bottom Codex-style prompt dock (permanently anchored at bottom of viewport) */}
+      <Box flexDirection="column" flexShrink={0} marginX={1} borderStyle="single" borderColor={frameBorderColor} paddingX={1}>
         <Box justifyContent="space-between">
           {isNarrow ? (
             <Text wrap="truncate-end">

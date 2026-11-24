@@ -175,7 +175,17 @@ program
 
     const service = new RoomService(room, db, activeAdapters, redactor);
     const taskService = new TaskService(room, dataDir, db, activeAdapters, redactor, config.checks);
+    let cleanedUp = false;
+    const isTty = Boolean(process.stdout.isTTY);
+    if (isTty) {
+      process.stdout.write('\x1b[?1049h\x1b[2J\x1b[H');
+    }
     const cleanup = (): void => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (isTty) {
+        process.stdout.write('\x1b[?1049l');
+      }
       db.releaseWriterLease(roomId);
       lock.release();
       db.close();
@@ -393,7 +403,18 @@ program
     const initialMessages = db.listMessages(roomId, { includeSealed: false });
     const initialFindings = db.listVisibleFindings(roomId);
 
+    let cleanedUp = false;
+    const isTty = Boolean(process.stdout.isTTY);
+    if (isTty) {
+      process.stdout.write('\x1b[?1049h\x1b[2J\x1b[H');
+    }
     const cleanup = (): void => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (isTty) {
+        process.stdout.write('\x1b[?1049l');
+      }
+      db.releaseWriterLease(roomId);
       lock.release();
       db.close();
     };
