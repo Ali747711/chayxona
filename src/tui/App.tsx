@@ -10,6 +10,7 @@ import type { AuditMode } from '../orchestrator/git-inspector.js';
 import { isPathInside } from '../persistence/db.js';
 import { FindingsPanel } from './FindingsPanel.js';
 import { getInputSuggestions, parseUserInput } from './commands.js';
+import { MarkdownText } from './markdown.js';
 import { createTheme } from './theme.js';
 
 export interface StaticEntry {
@@ -34,6 +35,8 @@ export interface AppProps {
 type AgentLiveState = {
   status: 'idle' | 'running' | 'streaming' | 'done' | 'error' | 'cancelled';
   detail: string;
+  startedAt?: number;
+  elapsedSec?: string;
 };
 
 const HELP_TEXT = [
@@ -146,6 +149,15 @@ export const App: React.FC<AppProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  // Update live per-agent elapsed timers every 500ms only while at least one agent is active
+  const [clockTick, setClockTick] = useState(0);
+  const anyActive = Object.values(agentStates).some((s) => s.status === 'running' || s.status === 'streaming');
+  useEffect(() => {
+    if (!anyActive) return;
+    const timer = setInterval(() => setClockTick((t) => t + 1), 500);
+    return () => clearInterval(timer);
+  }, [anyActive]);
+
   useEffect(() => {
     const onMessage = (msg: MessageRecord): void => {
       setStaticItems((prev) => [
@@ -185,17 +197,27 @@ export const App: React.FC<AppProps> = ({
       const a = ev.agentId;
       if (ev.type === 'turn.started') {
         previewBufRef.current[a] = '';
-        setAgentStates((prev) => ({ ...prev, [a]: { status: 'running', detail: 'thinking...' } }));
+        setAgentStates((prev) => ({ ...prev, [a]: { status: 'running', detail: 'thinking...', startedAt: Date.now() } }));
       } else if (ev.type === 'tool.started') {
-        setAgentStates((prev) => ({ ...prev, [a]: { status: 'running', detail: `tool:${ev.toolName}` } }));
+        setAgentStates((prev) => ({
+          ...prev,
+          [a]: { ...prev[a], status: 'running', detail: `tool:${ev.toolName}` },
+        }));
       } else if (ev.type === 'text.delta') {
         previewBufRef.current[a] = ((previewBufRef.current[a] ?? '') + ev.delta).slice(-400);
         previewDirtyRef.current = true;
-        setAgentStates((prev) => ({ ...prev, [a]: { status: 'streaming', detail: 'streaming...' } }));
+        setAgentStates((prev) => ({
+          ...prev,
+          [a]: { ...prev[a], status: 'streaming', detail: 'streaming...' },
+        }));
       } else if (ev.type === 'turn.completed') {
         delete previewBufRef.current[a];
         setLivePreview({ ...previewBufRef.current });
-        setAgentStates((prev) => ({ ...prev, [a]: { status: 'done', detail: 'done' } }));
+        setAgentStates((prev) => {
+          const startedAt = prev[a]?.startedAt;
+          const elapsedSec = startedAt ? `${((Date.now() - startedAt) / 1000).toFixed(1)}s` : undefined;
+          return { ...prev, [a]: { status: 'done', detail: 'done', elapsedSec } };
+        });
       } else if (ev.type === 'turn.cancelled') {
         delete previewBufRef.current[a];
         setLivePreview({ ...previewBufRef.current });
@@ -534,7 +556,7 @@ export const App: React.FC<AppProps> = ({
                 </Box>
               ) : (
                 <Box paddingLeft={2}>
-                  <Text>{item.body}</Text>
+                  <MarkdownText text={item.body} theme={theme} />
                 </Box>
               )}
             </Box>
@@ -563,11 +585,21 @@ export const App: React.FC<AppProps> = ({
             const st = agentStates[a] ?? { status: 'idle', detail: '' };
             const { glyph, color: glyphColor } = theme.statusGlyph(st.status);
             const agentColor = theme.senderColor(a);
+            const liveElapsed =
+              (st.status === 'running' || st.status === 'streaming') && st.startedAt && clockTick >= 0
+                ? ` ${((Date.now() - st.startedAt) / 1000).toFixed(1)}s`
+                : st.elapsedSec
+                  ? ` ${st.elapsedSec}`
+                  : '';
             return (
               <Text key={a} wrap="truncate-end">
                 <Text color={glyphColor}>{glyph} </Text>
                 <Text bold color={st.status === 'idle' ? theme.muted : agentColor}>{a.toUpperCase()}</Text>
-                <Text color={st.detail.startsWith('tool:') ? theme.tool : theme.muted}> {st.detail || st.status}</Text>
+                <Text color={st.detail.startsWith('tool:') ? theme.tool : theme.muted}>
+                  {' '}
+                  {st.detail || st.status}
+                  {liveElapsed}
+                </Text>
               </Text>
             );
           })}
