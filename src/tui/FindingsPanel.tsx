@@ -8,10 +8,17 @@ export interface FindingsPanelProps {
   findings: readonly FindingRecord[];
   active: boolean;
   theme: TuiTheme;
+  maxVisible?: number;
   onClose: () => void;
 }
 
-export const FindingsPanel: React.FC<FindingsPanelProps> = ({ findings, active, theme, onClose }) => {
+export const FindingsPanel: React.FC<FindingsPanelProps> = ({
+  findings,
+  active,
+  theme,
+  maxVisible = 6,
+  onClose,
+}) => {
   const grouped = groupFindings(findings);
   const flat = grouped.flatMap((g) => g.items.map((item) => ({ group: g.group, item })));
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -33,16 +40,19 @@ export const FindingsPanel: React.FC<FindingsPanelProps> = ({ findings, active, 
   );
 
   const clampedIdx = Math.min(selectedIndex, Math.max(0, flat.length - 1));
-  const windowStart = Math.max(0, clampedIdx - 4);
-  const visible = flat.slice(windowStart, windowStart + 8);
+  const half = Math.floor(maxVisible / 2);
+  const windowStart = Math.max(0, Math.min(clampedIdx - half, Math.max(0, flat.length - maxVisible)));
+  const visible = flat.slice(windowStart, windowStart + maxVisible);
   const dissentCount = flat.filter((f) => f.item.dissentsFrom.length > 0).length;
+  const rangeLabel =
+    flat.length > maxVisible ? ` (${windowStart + 1}-${windowStart + visible.length} of ${flat.length})` : '';
 
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={theme.borderActive} paddingX={1} marginTop={1}>
       <Box justifyContent="space-between">
         <Box gap={1}>
           <Text bold color={theme.brand} wrap="truncate-end">
-            FINDINGS &amp; DISSENT ({flat.length})
+            FINDINGS &amp; DISSENT ({flat.length}){rangeLabel}
           </Text>
           {dissentCount > 0 ? (
             <Text bold color={theme.dissent} wrap="truncate-end">

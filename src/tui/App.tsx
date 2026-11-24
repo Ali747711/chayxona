@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Static, Text, useApp, useInput } from 'ink';
+import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -72,15 +72,34 @@ export const App: React.FC<AppProps> = ({
   onExitCleanup,
 }) => {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 100;
+  const rows = stdout?.rows ?? 30;
+  const isNarrow = cols < 80;
+  const isShort = rows < 24;
   const theme = useMemo(() => createTheme(), []);
 
   const [staticItems, setStaticItems] = useState<StaticEntry[]>(() => {
+    const repoName = path.basename(service.room.repoPath);
+    const starterHint = dirtyRepoWarning
+      ? '  1) /audit diff                 Review your current uncommitted changes\n  2) /debate <question>          Blind Round 1 -> Cross-Exam Round 2\n  3) @claude|@codex|@agy <msg>   Ask a single agent directly'
+      : '  1) /debate <question>          Blind Round 1 -> Cross-Exam Round 2\n  2) /audit head                 Cross-review the latest commit\n  3) /task <description>         Safe worktree plan -> approve -> /apply';
     const intro: StaticEntry[] = [
       {
         key: 'banner',
         sender: 'CHAYXONA',
         meta: 'READ-ONLY ROOM',
-        body: `Room ${service.room.id} · Repo: ${service.room.repoPath} · Agents: ${service.room.agents.join(', ')}\nNotice: Prompts and repository context are sent to your selected external CLI vendors.${dirtyRepoWarning ? '\nWarning: Working tree has uncommitted changes.' : ''}`,
+        body: [
+          `Welcome to **${repoName}** (${service.room.id}) · Ready agents: ${service.room.agents.map((a) => `\`${a}\``).join(', ')}`,
+          dirtyRepoWarning
+            ? 'Working tree has uncommitted changes — `/audit diff` is ready to inspect them.'
+            : 'Working tree is clean — `/debate`, `/audit`, and `/task` are all ready.',
+          '',
+          'Quick start:',
+          starterHint,
+          '',
+          'External vendor notice: prompts & repo context are sent to your local CLIs.',
+        ].join('\n'),
       },
     ];
     const recovery = service.inspectRecoveryState();
@@ -564,37 +583,45 @@ export const App: React.FC<AppProps> = ({
         }}
       </Static>
 
-      {/* 2. Dynamic bottom region (strict 1-col ASCII glyphs + single-line truncation to prevent Ink ghost borders) */}
+      {/* 2. Dynamic bottom region (height-budgeted: <=6 rows closed, <=12 rows open; responsive <80 cols / <24 rows) */}
       <Box flexDirection="column" borderStyle="single" borderColor={frameBorderColor} paddingX={1}>
         <Box justifyContent="space-between">
-          <Text wrap="truncate-end">
-            <Text bold color={theme.brand}>CHAYXONA</Text>
-            <Text color={theme.muted}> / </Text>
-            <Text bold>{path.basename(service.room.repoPath)}</Text>
-            <Text color={theme.muted}> ({service.room.id}) </Text>
-            <Text bold color={theme.readOnlyBadge}>[READ-ONLY]</Text>
-          </Text>
+          {isNarrow ? (
+            <Text wrap="truncate-end">
+              <Text bold color={theme.brand}>CHAYXONA</Text>
+              <Text bold color={theme.readOnlyBadge}> [RO]</Text>
+            </Text>
+          ) : (
+            <Text wrap="truncate-end">
+              <Text bold color={theme.brand}>CHAYXONA</Text>
+              <Text color={theme.muted}> / </Text>
+              <Text bold>{path.basename(service.room.repoPath)}</Text>
+              <Text color={theme.muted}> ({service.room.id}) </Text>
+              <Text bold color={theme.readOnlyBadge}>[READ-ONLY]</Text>
+            </Text>
+          )}
           <Text wrap="truncate-end">
             <Text bold color={isBlind ? theme.borderBlind : theme.phaseBadge}>{phaseLabel}</Text>
-            <Text color={theme.muted}> | Turns {budget.used}/{budget.max}</Text>
+            <Text color={theme.muted}> | {isNarrow ? '' : 'Turns '}{budget.used}/{budget.max}</Text>
           </Text>
         </Box>
 
-        <Box gap={2}>
+        <Box gap={isNarrow ? 1 : 2}>
           {service.room.agents.map((a) => {
             const st = agentStates[a] ?? { status: 'idle', detail: '' };
             const { glyph, color: glyphColor } = theme.statusGlyph(st.status);
             const agentColor = theme.senderColor(a);
+            const label = isNarrow ? (a === 'claude' ? 'CLD' : a === 'codex' ? 'CDX' : 'AGY') : a.toUpperCase();
             const liveElapsed =
               (st.status === 'running' || st.status === 'streaming') && st.startedAt && clockTick >= 0
-                ? ` ${((Date.now() - st.startedAt) / 1000).toFixed(1)}s`
+                ? ` ${((Date.now() - st.startedAt) / 1000).toFixed(isNarrow ? 0 : 1)}s`
                 : st.elapsedSec
-                  ? ` ${st.elapsedSec}`
+                  ? ` ${isNarrow ? st.elapsedSec.replace(/\.\d+s$/, 's') : st.elapsedSec}`
                   : '';
             return (
               <Text key={a} wrap="truncate-end">
                 <Text color={glyphColor}>{glyph} </Text>
-                <Text bold color={st.status === 'idle' ? theme.muted : agentColor}>{a.toUpperCase()}</Text>
+                <Text bold color={st.status === 'idle' ? theme.muted : agentColor}>{label}</Text>
                 <Text color={st.detail.startsWith('tool:') ? theme.tool : theme.muted}>
                   {' '}
                   {st.detail || st.status}
@@ -605,7 +632,7 @@ export const App: React.FC<AppProps> = ({
           })}
         </Box>
 
-        {isBlind ? (
+        {isBlind && !showFindings ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold color={theme.borderBlind} wrap="truncate-end">
               BLIND ROUND 1 - Takes sealed until all finish ([Ctrl+U] unseal straggler)
@@ -616,7 +643,7 @@ export const App: React.FC<AppProps> = ({
           </Box>
         ) : null}
 
-        {!isBlind && Object.keys(livePreview).length > 0 ? (
+        {!isBlind && !showFindings && !isShort && Object.keys(livePreview).length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
             {Object.entries(livePreview).map(([agent, preview]) =>
               preview ? (
@@ -636,6 +663,7 @@ export const App: React.FC<AppProps> = ({
             findings={findings}
             active={showFindings}
             theme={theme}
+            maxVisible={isShort ? 4 : 6}
             onClose={() => setShowFindings(false)}
           />
         ) : null}
