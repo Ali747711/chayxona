@@ -40,5 +40,27 @@
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "vitest": "^3.0.7"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ali747711/chayxona.git"
+  },
+  "homepage": "https://github.com/Ali747711/chayxona#readme",
+  "bugs": {
+    "url": "https://github.com/Ali747711/chayxona/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "multi-agent",
+    "cli",
+    "tui",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "code-review",
+    "mcp",
+    "debate"
+  ]
 }
