@@ -9,6 +9,7 @@ import type { TaskService } from '../orchestrator/task-service.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
 import { isPathInside } from '../persistence/db.js';
 import { FindingsPanel } from './FindingsPanel.js';
+import { WelcomeCard } from './WelcomeCard.js';
 import { getInputSuggestions, parseUserInput } from './commands.js';
 import { MarkdownText } from './markdown.js';
 import { createTheme } from './theme.js';
@@ -81,28 +82,7 @@ export const App: React.FC<AppProps> = ({
   const theme = useMemo(() => createTheme(), []);
 
   const [staticItems, setStaticItems] = useState<StaticEntry[]>(() => {
-    const repoName = path.basename(service.room.repoPath);
-    const starterHint = dirtyRepoWarning
-      ? '  1) /audit diff                 Review your current uncommitted changes\n  2) /debate <question>          Blind Round 1 -> Cross-Exam Round 2\n  3) @claude|@codex|@agy <msg>   Ask a single agent directly'
-      : '  1) /debate <question>          Blind Round 1 -> Cross-Exam Round 2\n  2) /audit head                 Cross-review the latest commit\n  3) /task <description>         Safe worktree plan -> approve -> /apply';
-    const intro: StaticEntry[] = [
-      {
-        key: 'banner',
-        sender: 'CHAYXONA',
-        meta: 'READ-ONLY ROOM',
-        body: [
-          `Welcome to **${repoName}** (${service.room.id}) · Ready agents: ${service.room.agents.map((a) => `\`${a}\``).join(', ')}`,
-          dirtyRepoWarning
-            ? 'Working tree has uncommitted changes — `/audit diff` is ready to inspect them.'
-            : 'Working tree is clean — `/debate`, `/audit`, and `/task` are all ready.',
-          '',
-          'Quick start:',
-          starterHint,
-          '',
-          'External vendor notice: prompts & repo context are sent to your local CLIs.',
-        ].join('\n'),
-      },
-    ];
+    const intro: StaticEntry[] = [];
     const recovery = service.inspectRecoveryState();
     if (recovery?.kind === 'incomplete_blind_r1') {
       intro.push({
@@ -590,7 +570,7 @@ export const App: React.FC<AppProps> = ({
         {(item) => {
           const senderColor = theme.senderColor(item.sender);
           return (
-            <Box key={item.key} flexDirection="column" marginBottom={1}>
+            <Box key={item.key} flexDirection="column" paddingX={2} marginTop={1}>
               <Box gap={1}>
                 <Text bold color={senderColor}>
                   [{item.sender}]
@@ -615,8 +595,21 @@ export const App: React.FC<AppProps> = ({
         }}
       </Static>
 
-      {/* 2. Dynamic bottom region (height-budgeted: <=6 rows closed, <=12 rows open; responsive <80 cols / <24 rows) */}
-      <Box flexDirection="column" borderStyle="single" borderColor={frameBorderColor} paddingX={1}>
+      {/* Centered Welcome Card when room is fresh (disappears cleanly once conversation starts) */}
+      {staticItems.length === 0 && !service.isRunning() ? (
+        <WelcomeCard
+          roomId={service.room.id}
+          repoPath={service.room.repoPath}
+          agents={service.room.agents}
+          getRole={(a) => service.getRole(a)}
+          dirtyRepo={dirtyRepoWarning}
+          cols={cols}
+          theme={theme}
+        />
+      ) : null}
+
+      {/* 2. Dynamic bottom dock (height-budgeted, padded, responsive <80 cols / <24 rows) */}
+      <Box flexDirection="column" marginX={1} marginTop={1} borderStyle="single" borderColor={frameBorderColor} paddingX={1}>
         <Box justifyContent="space-between">
           {isNarrow ? (
             <Text wrap="truncate-end">
