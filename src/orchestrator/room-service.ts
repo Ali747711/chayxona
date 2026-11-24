@@ -50,6 +50,21 @@ export interface RunCommandResult {
   failedAgents: AgentId[];
 }
 
+export type RecoveryState =
+  | {
+      kind: 'incomplete_blind_r1';
+      roundId: number;
+      topic: string;
+      completedAgents: AgentId[];
+      interruptedAgents: AgentId[];
+    }
+  | {
+      kind: 'pending_r2';
+      roundId: number;
+      topic: string;
+      completedAgents: AgentId[];
+    };
+
 export class RoomService extends EventEmitter {
   private readonly activeControllers = new Map<AgentId, AbortController>();
   private activeRound: RoundRecord | null = null;
@@ -69,6 +84,165 @@ export class RoomService extends EventEmitter {
 
   getActiveRound(): RoundRecord | null {
     return this.activeRound;
+  }
+
+  /**
+   * Inspects whether the room crashed mid-Blind-R1 or after reveal (pending R2)
+   * so `chayxona resume` can offer explicit [R]etry / [U]nseal / [C]ontinue recovery
+   * without ever silently replaying turns.
+   */
+  inspectRecoveryState(): RecoveryState | null {
+    const latest = this.db.getLatestRound(this.room.id);
+    if (!latest || latest.cancelled) return null;
+
+    if (latest.phase === 'blind_r1') {
+      const turns = this.db.listRoundTurns(this.room.id, latest.id, 'blind_r1');
+      const completedAgents = turns.filter((t) => t.status === 'done').map((t) => t.agentId);
+      const interruptedAgents = this.room.agents.filter((a) => !completedAgents.includes(a));
+      return {
+        kind: 'incomplete_blind_r1',
+        roundId: latest.id,
+        topic: latest.topic,
+        completedAgents,
+        interruptedAgents,
+      };
+    }
+
+    if (latest.phase === 'revealed_pending_r2') {
+      const turns = this.db.listRoundTurns(this.room.id, latest.id, 'blind_r1');
+      const completedAgents = turns.filter((t) => t.status === 'done').map((t) => t.agentId);
+      return {
+        kind: 'pending_r2',
+        roundId: latest.id,
+        topic: latest.topic,
+        completedAgents,
+      };
+    }
+
+    return null;
+  }
+
+  async recoverUnsealAndContinue(): Promise<RunCommandResult> {
+    if (this.isRunning()) {
+      throw new Error('Cannot recover while another round is running.');
+    }
+    const state = this.inspectRecoveryState();
+    if (!state || state.kind !== 'incomplete_blind_r1') {
+      throw new Error('No incomplete Blind Round 1 to unseal.');
+    }
+
+    const revealed = this.db.unsealRoundMessages(this.room.id, state.roundId);
+    for (const msg of revealed) {
+      if (msg.roundPhase === 'blind_r1') {
+        this.emit('messageCommitted', msg);
+      }
+    }
+    this.emit('findingsUpdated', this.db.listVisibleFindings(this.room.id));
+
+    if (state.completedAgents.length < 2) {
+      this.db.updateRound(this.room.id, state.roundId, { phase: 'failed_partial' });
+      this.emitNotice('warning', `Unsealed ${state.completedAgents.length} take(s); need >= 2 for Cross-Exam R2.`);
+      return {
+        roundId: state.roundId,
+        status: 'failed',
+        exitCode: 1,
+        succeededAgents: state.completedAgents,
+        failedAgents: state.interruptedAgents,
+      };
+    }
+
+    const budget = this.getBudgetStatus(state.completedAgents.length);
+    if (!budget.ok) {
+      this.db.updateRound(this.room.id, state.roundId, { phase: 'revealed_pending_r2' });
+      throw new Error(
+        `Unsealed R1, but insufficient turn budget for R2 (${budget.remaining} remaining, need ${state.completedAgents.length}). Run /budget +12 then /recover r2.`,
+      );
+    }
+
+    const r2 = await this.runCrossExamR2(state.roundId, state.topic, state.completedAgents);
+    return {
+      ...r2,
+      status: r2.status === 'completed' && state.interruptedAgents.length > 0 ? 'degraded' : r2.status,
+      exitCode: r2.status === 'completed' && state.interruptedAgents.length > 0 ? 2 : r2.exitCode,
+      failedAgents: [...new Set([...state.interruptedAgents, ...r2.failedAgents])],
+    };
+  }
+
+  async recoverRetryInterrupted(): Promise<RunCommandResult> {
+    if (this.isRunning()) {
+      throw new Error('Cannot recover while another round is running.');
+    }
+    const state = this.inspectRecoveryState();
+    if (!state || state.kind !== 'incomplete_blind_r1') {
+      throw new Error('No incomplete Blind Round 1 to retry.');
+    }
+
+    const retryAgents = state.interruptedAgents.filter((a) => this.adapters.has(a));
+    const needed = retryAgents.length + (this.room.solo ? 0 : this.room.agents.length);
+    const budget = this.getBudgetStatus(needed);
+    if (!budget.ok) {
+      throw new Error(
+        `Insufficient turn budget for retry + R2 (${budget.remaining} remaining, need ${needed}). Run /budget +12 first.`,
+      );
+    }
+
+    const recentHistory = this.db.listMessages(this.room.id, { includeSealed: false, limit: 12 });
+    const round = this.db.getRound(this.room.id, state.roundId);
+    this.activeRound = round;
+
+    const retryRes = await this.runConcurrentTurns(
+      retryAgents,
+      state.roundId,
+      'blind_r1',
+      true,
+      (agentId) =>
+        buildBlindR1Prompt({
+          agentId,
+          kind: round?.kind === 'audit' ? 'audit' : 'debate',
+          topic: state.topic,
+          recentHistory,
+        }),
+    );
+
+    const revealed = this.db.unsealRoundMessages(this.room.id, state.roundId);
+    for (const msg of revealed) {
+      if (msg.roundPhase === 'blind_r1') {
+        this.emit('messageCommitted', msg);
+      }
+    }
+    this.emit('findingsUpdated', this.db.listVisibleFindings(this.room.id));
+
+    const allSucceeded = [...new Set([...state.completedAgents, ...retryRes.succeeded])];
+    if (allSucceeded.length < 2) {
+      this.db.updateRound(this.room.id, state.roundId, { phase: 'failed_partial' });
+      this.activeRound = null;
+      return {
+        roundId: state.roundId,
+        status: 'failed',
+        exitCode: 1,
+        succeededAgents: allSucceeded,
+        failedAgents: retryRes.failed,
+      };
+    }
+
+    return this.runCrossExamR2(state.roundId, state.topic, allSucceeded);
+  }
+
+  async recoverResumePendingR2(): Promise<RunCommandResult> {
+    if (this.isRunning()) {
+      throw new Error('Cannot recover while another round is running.');
+    }
+    const state = this.inspectRecoveryState();
+    if (!state || state.kind !== 'pending_r2') {
+      throw new Error('No revealed round waiting for Cross-Exam R2.');
+    }
+    const budget = this.getBudgetStatus(state.completedAgents.length);
+    if (!budget.ok) {
+      throw new Error(
+        `Insufficient turn budget for R2 (${budget.remaining} remaining, need ${state.completedAgents.length}). Run /budget +12 first.`,
+      );
+    }
+    return this.runCrossExamR2(state.roundId, state.topic, state.completedAgents);
   }
 
   isRunning(): boolean {

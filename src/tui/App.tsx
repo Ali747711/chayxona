@@ -42,6 +42,7 @@ const HELP_TEXT = [
   '  /unseal (or Ctrl+U)      Unseal Blind R1 past straggler once >= 2 takes finish',
   '  /budget +<n>             Extend room turn budget',
   '  /pause | /continue       Pause before next round / resume scheduling',
+  '  /recover retry|unseal|r2 Recover an interrupted round after resume',
   '  /stop [agent|all]        Cancel active turn(s)',
   '  /export [md|jsonl] [path] Export redacted transcript',
   '  /help | /quit            Show help / exit cleanly',
@@ -66,6 +67,22 @@ export const App: React.FC<AppProps> = ({
         body: `Room ${service.room.id} · Repo: ${service.room.repoPath} · Agents: ${service.room.agents.join(', ')}\nNotice: Prompts and repository context are sent to your selected external CLI vendors.${dirtyRepoWarning ? '\nWarning: Working tree has uncommitted changes.' : ''}`,
       },
     ];
+    const recovery = service.inspectRecoveryState();
+    if (recovery?.kind === 'incomplete_blind_r1') {
+      intro.push({
+        key: 'recovery-banner',
+        sender: 'RECOVERY',
+        meta: `R${recovery.roundId} INTERRUPTED`,
+        body: `Blind Round 1 was interrupted (completed: ${recovery.completedAgents.join(', ') || 'none'}; interrupted: ${recovery.interruptedAgents.join(', ')}).\nCompleted takes remain sealed. Run \`/recover retry\` to retry interrupted agents or \`/recover unseal\` to reveal partial takes.`,
+      });
+    } else if (recovery?.kind === 'pending_r2') {
+      intro.push({
+        key: 'recovery-banner',
+        sender: 'RECOVERY',
+        meta: `R${recovery.roundId} PENDING R2`,
+        body: `Round 1 was revealed before exit. Run \`/recover r2\` to run Cross-Exam Round 2 with ${recovery.completedAgents.join(', ')}.`,
+      });
+    }
     for (const m of initialMessages) {
       intro.push({
         key: m.id,
@@ -246,6 +263,25 @@ export const App: React.FC<AppProps> = ({
     }
     if (trimmed === '/unseal') {
       service.unsealStraggler();
+      return;
+    }
+    if (trimmed.startsWith('/recover')) {
+      const sub = trimmed.slice(8).trim().toLowerCase();
+      if (sub === 'retry') {
+        void service.recoverRetryInterrupted().catch((err: unknown) => {
+          pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+        });
+      } else if (sub === 'unseal') {
+        void service.recoverUnsealAndContinue().catch((err: unknown) => {
+          pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+        });
+      } else if (sub === 'r2') {
+        void service.recoverResumePendingR2().catch((err: unknown) => {
+          pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+        });
+      } else {
+        setNotice('Usage: /recover retry | /recover unseal | /recover r2');
+      }
       return;
     }
     if (trimmed.startsWith('/stop')) {
