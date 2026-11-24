@@ -1,5 +1,6 @@
 # Chayxona
 
+[![npm version](https://img.shields.io/npm/v/chayxona.svg)](https://www.npmjs.com/package/chayxona)
 [![Version](https://img.shields.io/badge/version-v0.5.0-blue.svg)](https://github.com/Ali747711/chayxona/releases/tag/v0.5.0)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.5.0-green.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -8,6 +9,10 @@
 **One repository, one terminal room, multiple independent coding CLIs debating, cross-reviewing, and safely implementing code live — with zero new API keys.**
 
 Chayxona (named after the Central Asian teahouse where people gather to debate and share ideas) orchestrates your already-installed, already-authenticated local coding CLIs (**Claude Code**, **OpenAI Codex CLI**, and **Google Antigravity CLI**) inside a single local-first terminal room.
+
+<p align="center">
+  <img src="docs/demo.svg" alt="Chayxona Multi-Agent Terminal Debate Demo" width="850">
+</p>
 
 ---
 
@@ -25,18 +30,24 @@ Chayxona (named after the Central Asian teahouse where people gather to debate a
 
 Requires **Node.js >= 22.5** and at least 2 of `claude`, `codex`, or `agy` installed locally.
 
+### Option A: Run directly with npx (zero install)
 ```bash
-git clone https://github.com/Ali747711/chayxona.git
-cd chayxona
-npm install
-npm run build
-npm link
+# Check installed CLI providers
+npx chayxona doctor
 
-# Probe local CLIs and verified read-only profiles
+# Launch the interactive terminal room
+npx chayxona start
+
+# Automated PR review
+npx chayxona pr <number>
+```
+
+### Option B: Install globally
+```bash
+npm install -g chayxona
 chayxona doctor
-
-# Optional: initialize .chayxona.json in your repo
-chayxona init
+chayxona start
+```
 
 # Start an interactive terminal room
 chayxona start
