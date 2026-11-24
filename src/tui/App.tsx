@@ -9,7 +9,7 @@ import type { TaskService } from '../orchestrator/task-service.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
 import { isPathInside } from '../persistence/db.js';
 import { FindingsPanel } from './FindingsPanel.js';
-import { parseUserInput } from './commands.js';
+import { getInputSuggestions, parseUserInput } from './commands.js';
 import { createTheme } from './theme.js';
 
 export interface StaticEntry {
@@ -108,6 +108,8 @@ export const App: React.FC<AppProps> = ({
   });
 
   const [input, setInput] = useState('');
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState<number | null>(null);
   const [showFindings, setShowFindings] = useState(false);
   const [findings, setFindings] = useState<FindingRecord[]>(initialFindings);
   const [round, setRound] = useState<RoundRecord | null>(service.getActiveRound());
@@ -220,10 +222,37 @@ export const App: React.FC<AppProps> = ({
     };
   }, [service]);
 
+  const suggestions = useMemo(
+    () => getInputSuggestions(input, service.room.agents),
+    [input, service.room.agents],
+  );
+
   useInput(
     (_ch, key) => {
       if (key.tab && !showFindings) {
-        setShowFindings(true);
+        if (suggestions.length > 0) {
+          setInput(suggestions[0]);
+          setHistoryIdx(null);
+        } else {
+          setShowFindings(true);
+        }
+        return;
+      }
+      if (key.upArrow && !showFindings && inputHistory.length > 0) {
+        const nextIdx = historyIdx === null ? inputHistory.length - 1 : Math.max(0, historyIdx - 1);
+        setHistoryIdx(nextIdx);
+        setInput(inputHistory[nextIdx] ?? '');
+        return;
+      }
+      if (key.downArrow && !showFindings && historyIdx !== null) {
+        if (historyIdx >= inputHistory.length - 1) {
+          setHistoryIdx(null);
+          setInput('');
+        } else {
+          const nextIdx = historyIdx + 1;
+          setHistoryIdx(nextIdx);
+          setInput(inputHistory[nextIdx] ?? '');
+        }
         return;
       }
       if (key.ctrl && _ch === 'u') {
@@ -244,8 +273,11 @@ export const App: React.FC<AppProps> = ({
 
   const handleSubmit = (raw: string): void => {
     setInput('');
+    setHistoryIdx(null);
     const cmd = parseUserInput(raw);
     if (cmd.kind === 'empty') return;
+    const trimmedForHistory = raw.trim();
+    setInputHistory((prev) => (prev[prev.length - 1] === trimmedForHistory ? prev : [...prev.slice(-49), trimmedForHistory]));
 
     if (cmd.kind === 'quit') {
       service.stop('all');
@@ -590,9 +622,15 @@ export const App: React.FC<AppProps> = ({
             />
           </Box>
           <Text color={findings.length > 0 && !isBlind ? theme.brand : theme.muted} wrap="truncate-end">
-            [Tab] Findings({isBlind ? 'sealed' : findings.length})
+            [Tab] {suggestions.length > 0 ? 'Complete' : `Findings(${isBlind ? 'sealed' : findings.length})`}
           </Text>
         </Box>
+
+        {suggestions.length > 0 ? (
+          <Text color={theme.tool} wrap="truncate-end">
+            Suggest: {suggestions.map((s) => s.trim()).join('  ')}
+          </Text>
+        ) : null}
       </Box>
     </Box>
   );

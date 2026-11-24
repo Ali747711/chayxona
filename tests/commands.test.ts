@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseUserInput } from '../src/tui/commands.js';
+import { getInputSuggestions, parseUserInput } from '../src/tui/commands.js';
 
 describe('TUI command parser', () => {
   it('recognizes /agents and /agent locally', () => {
@@ -21,5 +21,11 @@ describe('TUI command parser', () => {
       focus: 'focus on auth',
     });
     expect(parseUserInput('hello everyone')).toEqual({ kind: 'plain', body: 'hello everyone' });
+  });
+
+  it('suggests matching /commands and @mentions while typing', () => {
+    expect(getInputSuggestions('/d', ['claude', 'codex', 'agy'])).toEqual(['/debate ', '/diff']);
+    expect(getInputSuggestions('@c', ['claude', 'codex', 'agy'])).toEqual(['@claude ', '@codex ']);
+    expect(getInputSuggestions('/debate already has space', ['claude'])).toEqual([]);
   });
 });

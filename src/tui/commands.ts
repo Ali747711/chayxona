@@ -110,3 +110,49 @@ export function parseUserInput(raw: string): ParsedCommand {
 
   return { kind: 'plain', body: trimmed };
 }
+
+export const SLASH_COMMANDS: readonly { cmd: string; takesArg: boolean }[] = [
+  { cmd: '/debate', takesArg: true },
+  { cmd: '/audit', takesArg: true },
+  { cmd: '/task', takesArg: true },
+  { cmd: '/approve', takesArg: true },
+  { cmd: '/reject', takesArg: true },
+  { cmd: '/diff', takesArg: false },
+  { cmd: '/apply', takesArg: true },
+  { cmd: '/agents', takesArg: false },
+  { cmd: '/summary', takesArg: false },
+  { cmd: '/findings', takesArg: false },
+  { cmd: '/unseal', takesArg: false },
+  { cmd: '/budget', takesArg: true },
+  { cmd: '/pause', takesArg: false },
+  { cmd: '/continue', takesArg: false },
+  { cmd: '/recover', takesArg: true },
+  { cmd: '/stop', takesArg: true },
+  { cmd: '/export', takesArg: true },
+  { cmd: '/help', takesArg: false },
+  { cmd: '/quit', takesArg: false },
+];
+
+export function getInputSuggestions(input: string, agents: readonly AgentId[]): string[] {
+  const trimmed = input.trimStart();
+  if (!trimmed || /\s/.test(trimmed)) return [];
+
+  if (trimmed.startsWith('/')) {
+    const lower = trimmed.toLowerCase();
+    return SLASH_COMMANDS
+      .filter((c) => c.cmd.startsWith(lower) && c.cmd !== lower)
+      .slice(0, 5)
+      .map((c) => (c.takesArg ? `${c.cmd} ` : c.cmd));
+  }
+
+  if (trimmed.startsWith('@')) {
+    const lower = trimmed.toLowerCase();
+    const mentions = [...agents.map((a) => `@${a}`), '@all'];
+    return mentions
+      .filter((m) => m.startsWith(lower) && m !== lower)
+      .slice(0, 4)
+      .map((m) => `${m} `);
+  }
+
+  return [];
+}
