@@ -9,9 +9,18 @@
   "bin": {
     "chayxona": "./bin/chayxona.mjs"
   },
+  "files": [
+    "dist",
+    "bin",
+    "action.yml",
+    "README.md",
+    "LICENSE",
+    "DESIGN.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
