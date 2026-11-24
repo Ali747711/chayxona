@@ -45,7 +45,7 @@ const HELP_TEXT = [
   '  /audit [diff|staged|head] Independent read-only audit',
   '  /task <description>      Plan -> approve -> isolated worktree write -> review -> /apply',
   '  /approve <id> | /reject <id> <reason>  Resolve pending plan or final approval',
-  '  /diff                    Show colorized diff of active task revision',
+  '  /diff | /checks          Inspect colorized task diff or allowlisted check runs',
   '  /apply <revision-id>     Apply approved worktree patch to original repo',
   '  /agents                  List active agents and their current status',
   '  @claude|@codex|@agy <m>  Targeted single-agent turn',
@@ -57,7 +57,7 @@ const HELP_TEXT = [
   '  /pause | /continue       Pause before next round / resume scheduling',
   '  /recover retry|unseal|r2 Recover an interrupted round after resume',
   '  /stop [agent|all]        Cancel active turn(s)',
-  '  /export [md|jsonl] [path] Export redacted transcript',
+  '  /export [md|jsonl|pr] [path] Export redacted transcript or GitHub PR card',
   '  /help | /quit            Show help / exit cleanly',
 ].join('\n');
 
@@ -350,12 +350,34 @@ export const App: React.FC<AppProps> = ({
       return;
     }
     if (cmd.kind === 'diff') {
-      const latest = taskService?.getLatestTask();
-      if (!latest || !latest.activeRevisionId) {
-        setNotice({ type: 'warning', text: 'No active task revision to diff yet.' });
+      const rev = taskService?.getActiveRevision();
+      if (!rev) {
+        setNotice({ type: 'warning', text: 'No active /task revision yet. Start one with /task <description>.' });
         return;
       }
-      pushSystemItem(`Active revision: ${latest.activeRevisionId} (state: ${latest.state})`, 'DIFF', true);
+      const patch = rev.diffPatch.trim();
+      if (!patch) {
+        pushSystemItem(`Revision ${rev.id} has an empty diff.`, 'DIFF');
+        return;
+      }
+      const truncated = patch.length > 6000;
+      const body = truncated
+        ? `${patch.slice(0, 6000)}\n\n[Showing first 6KB — run /export md for full transcript]`
+        : patch;
+      pushSystemItem(body, `DIFF ${rev.id}`, true);
+      return;
+    }
+    if (cmd.kind === 'checks') {
+      const checks = taskService?.getActiveChecks() ?? [];
+      if (checks.length === 0) {
+        setNotice({ type: 'warning', text: 'No check runs recorded for the active task revision.' });
+        return;
+      }
+      const lines = checks.map(
+        (c) =>
+          `${c.exitCode === 0 ? '[PASS]' : `[FAIL exit=${c.exitCode}]`} \`${c.command}\` (${c.durationMs}ms)\n${c.outputExcerpt.slice(0, 600)}`,
+      );
+      pushSystemItem(lines.join('\n\n'), 'CHECKS');
       return;
     }
     if (cmd.kind === 'pause') {
@@ -399,7 +421,8 @@ export const App: React.FC<AppProps> = ({
       return;
     }
     if (cmd.kind === 'export') {
-      const defaultPath = path.join(dataDir, 'exports', `${service.room.id}.${cmd.format}`);
+      const ext = cmd.format === 'jsonl' ? 'jsonl' : 'md';
+      const defaultPath = path.join(dataDir, 'exports', `${service.room.id}${cmd.format === 'pr' ? '-pr' : ''}.${ext}`);
       const targetPath = cmd.targetPath ? path.resolve(cmd.targetPath) : defaultPath;
       if (!allowInRepoExport && isPathInside(targetPath, service.room.repoPath)) {
         pushSystemItem(

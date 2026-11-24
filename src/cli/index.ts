@@ -359,8 +359,8 @@ program
 
 program
   .command('export <roomId>')
-  .description('Export a secret-redacted room transcript')
-  .option('--format <fmt>', 'Output format (md | jsonl)', 'md')
+  .description('Export a secret-redacted room transcript or GitHub PR decision card')
+  .option('--format <fmt>', 'Output format (md | jsonl | pr)', 'md')
   .option('--out <path>', 'Write to file path instead of stdout')
   .action((roomId: string, opts: { format: string; out?: string }) => {
     const dataDir = resolveDataDir();
@@ -370,7 +370,8 @@ program
       if (!room) throw new Error(`Room "${roomId}" not found.`);
       const redactor = new SecretRedactor();
       const service = new RoomService(room, db, new Map(), redactor);
-      const format = opts.format === 'jsonl' ? 'jsonl' : 'md';
+      const format: 'md' | 'jsonl' | 'pr' =
+        opts.format === 'jsonl' ? 'jsonl' : opts.format === 'pr' ? 'pr' : 'md';
       const content = service.exportRoom(format);
       if (opts.out) {
         const outPath = path.resolve(opts.out);

@@ -9,13 +9,14 @@ export type ParsedCommand =
   | { kind: 'findings' }
   | { kind: 'summary' }
   | { kind: 'diff' }
+  | { kind: 'checks' }
   | { kind: 'pause' }
   | { kind: 'continue' }
   | { kind: 'unseal' }
   | { kind: 'recover'; sub: 'retry' | 'unseal' | 'r2' | 'invalid' }
   | { kind: 'stop'; target: AgentId | 'all' }
   | { kind: 'budget'; delta: number }
-  | { kind: 'export'; format: 'md' | 'jsonl'; targetPath?: string }
+  | { kind: 'export'; format: 'md' | 'jsonl' | 'pr'; targetPath?: string }
   | { kind: 'task'; description: string }
   | { kind: 'approve'; id: string }
   | { kind: 'reject'; id: string; reason: string }
@@ -36,6 +37,7 @@ export function parseUserInput(raw: string): ParsedCommand {
   if (trimmed === '/findings') return { kind: 'findings' };
   if (trimmed === '/summary') return { kind: 'summary' };
   if (trimmed === '/diff') return { kind: 'diff' };
+  if (trimmed === '/checks') return { kind: 'checks' };
   if (trimmed === '/pause') return { kind: 'pause' };
   if (trimmed === '/continue') return { kind: 'continue' };
   if (trimmed === '/unseal') return { kind: 'unseal' };
@@ -59,7 +61,8 @@ export function parseUserInput(raw: string): ParsedCommand {
 
   if (trimmed === '/export' || trimmed.startsWith('/export ')) {
     const parts = trimmed.split(/\s+/).slice(1);
-    const format = parts[0] === 'jsonl' ? 'jsonl' : 'md';
+    const format: 'md' | 'jsonl' | 'pr' =
+      parts[0] === 'jsonl' ? 'jsonl' : parts[0] === 'pr' ? 'pr' : 'md';
     return { kind: 'export', format, targetPath: parts[1] };
   }
 
@@ -118,6 +121,7 @@ export const SLASH_COMMANDS: readonly { cmd: string; takesArg: boolean }[] = [
   { cmd: '/approve', takesArg: true },
   { cmd: '/reject', takesArg: true },
   { cmd: '/diff', takesArg: false },
+  { cmd: '/checks', takesArg: false },
   { cmd: '/apply', takesArg: true },
   { cmd: '/agents', takesArg: false },
   { cmd: '/summary', takesArg: false },

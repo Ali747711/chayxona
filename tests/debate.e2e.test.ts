@@ -135,10 +135,15 @@ describe('RoomService E2E (Blind R1 -> Cross-Exam R2)', () => {
     const codexR2 = findings.find((f) => f.canonicalId === 'R1-r2-codex-F1');
     expect(codexR2?.dissentsFrom).toEqual(['R1-r1-claude-F1']);
 
-    // Export works
+    // Export works (md + GitHub PR decision card)
     const md = service.exportRoom('md');
     expect(md).toContain('Chayxona Debate Transcript');
     expect(md).toContain('DISSENTS: R1-r1-claude-F1');
+
+    const prCard = service.exportRoom('pr');
+    expect(prCard).toContain('## Chayxona Cross-Model Review');
+    expect(prCard).toContain('| Severity | ID | Location | Summary | Dissent |');
+    expect(prCard).toContain('<details>');
 
     // Zero repo writes
     const gitStatus = execFileSync('git', ['--no-optional-locks', 'status', '--porcelain'], { cwd: repo, encoding: 'utf8' });

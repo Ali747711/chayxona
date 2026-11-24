@@ -69,6 +69,18 @@ export class TaskService {
     return this.db.getLatestTask(this.room.id);
   }
 
+  getActiveRevision(): RevisionRecord | null {
+    const latest = this.getLatestTask();
+    if (!latest?.activeRevisionId) return null;
+    return this.db.getRevision(latest.activeRevisionId);
+  }
+
+  getActiveChecks(): CheckRecord[] {
+    const latest = this.getLatestTask();
+    if (!latest?.activeRevisionId) return [];
+    return this.db.listChecks(latest.activeRevisionId);
+  }
+
   getWorktreeHandle(taskId: string): WorktreeHandle | null {
     return this.worktrees.get(taskId) ?? null;
   }

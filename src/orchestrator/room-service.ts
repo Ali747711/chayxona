@@ -704,8 +704,9 @@ export class RoomService extends EventEmitter {
 
   /**
    * Exports redacted transcript + findings (strictly respecting the blind visibility gate).
+   * Supports `md`, `jsonl`, and `pr` (GitHub PR comment card with collapsible details).
    */
-  exportRoom(format: 'md' | 'jsonl'): string {
+  exportRoom(format: 'md' | 'jsonl' | 'pr'): string {
     const messages = this.db.listMessages(this.room.id, { includeSealed: false });
     const findings = this.db.listVisibleFindings(this.room.id);
     const events = this.db.listVisibleEvents(this.room.id);
@@ -718,6 +719,43 @@ export class RoomService extends EventEmitter {
         ...events.map((e) => JSON.stringify({ type: 'event', event: e })),
       ];
       return this.redactor.redact(rows.join('\n') + '\n');
+    }
+
+    if (format === 'pr') {
+      const dissents = findings.filter((f) => f.dissentsFrom.length > 0);
+      const blocking = findings.filter((f) => f.severity === 'critical' || f.severity === 'high');
+      const lines: string[] = [
+        '## Chayxona Cross-Model Review',
+        '',
+        `**Room:** \`${this.room.id}\` · **Agents:** ${this.room.agents.map((a) => `\`${a}\``).join(', ')} · **Findings:** ${findings.length} (${blocking.length} high/critical, ${dissents.length} dissent)`,
+        '',
+      ];
+
+      if (findings.length > 0) {
+        lines.push('### Findings & Dissent', '');
+        lines.push('| Severity | ID | Location | Summary | Dissent |');
+        lines.push('|---|---|---|---|---|');
+        for (const f of findings) {
+          const loc = f.file ? `\`${f.file}${f.line ? `:${f.line}` : ''}\`` : '_General_';
+          const dissent = f.dissentsFrom.length > 0 ? f.dissentsFrom.map((d) => `\`${d}\``).join(', ') : '—';
+          const cleanSummary = f.summary.replace(/\|/g, '\\|');
+          lines.push(`| **${f.severity.toUpperCase()}** | \`${f.canonicalId}\` | ${loc} | ${cleanSummary} | ${dissent} |`);
+        }
+        lines.push('');
+      } else {
+        lines.push('_No structured findings were reported._', '');
+      }
+
+      const agentMsgs = messages.filter((m) => m.sender !== 'human' && m.sender !== 'system');
+      if (agentMsgs.length > 0) {
+        lines.push('<details>', '<summary>Full Agent Transcript (Blind R1 &amp; Cross-Exam R2)</summary>', '');
+        for (const m of agentMsgs) {
+          lines.push(`#### ${m.sender.toUpperCase()} *(R${m.roundId} · ${m.roundPhase})*`, '', m.body, '');
+        }
+        lines.push('</details>', '');
+      }
+
+      return this.redactor.redact(lines.join('\n') + '\n');
     }
 
     const lines: string[] = [
