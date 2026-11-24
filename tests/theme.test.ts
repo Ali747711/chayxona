@@ -14,7 +14,7 @@ describe('TUI theme & NO_COLOR compliance', () => {
     expect(t.diffLineColor('+added')).toBe('green');
     expect(t.diffLineColor('-removed')).toBe('red');
     expect(t.diffLineColor('@@ -1,2 +1,2 @@')).toBe('cyan');
-    expect(t.statusGlyph('done').glyph).toBe('✓');
+    expect(t.statusGlyph('done').glyph).toBe('+');
   });
 
   it('disables all colors cleanly when NO_COLOR=1 is set', () => {
@@ -24,6 +24,6 @@ describe('TUI theme & NO_COLOR compliance', () => {
     expect(t.senderColor('claude')).toBeUndefined();
     expect(t.severityColor('critical')).toBeUndefined();
     expect(t.diffLineColor('+added')).toBeUndefined();
-    expect(t.statusGlyph('done')).toEqual({ glyph: '✓', color: undefined });
+    expect(t.statusGlyph('done')).toEqual({ glyph: '+', color: undefined });
   });
 });

@@ -9,6 +9,7 @@ import type { TaskService } from '../orchestrator/task-service.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
 import { isPathInside } from '../persistence/db.js';
 import { FindingsPanel } from './FindingsPanel.js';
+import { parseUserInput } from './commands.js';
 import { createTheme } from './theme.js';
 
 export interface StaticEntry {
@@ -43,6 +44,7 @@ const HELP_TEXT = [
   '  /approve <id> | /reject <id> <reason>  Resolve pending plan or final approval',
   '  /diff                    Show colorized diff of active task revision',
   '  /apply <revision-id>     Apply approved worktree patch to original repo',
+  '  /agents                  List active agents and their current status',
   '  @claude|@codex|@agy <m>  Targeted single-agent turn',
   '  @all <msg> or plain text Broadcast freeform turn (or R2 steering note during Blind R1)',
   '  /summary                 Deterministic local summary of findings & dissent',
@@ -120,6 +122,7 @@ export const App: React.FC<AppProps> = ({
   });
   const [livePreview, setLivePreview] = useState<Record<string, string>>({});
   const previewBufRef = useRef<Record<string, string>>({});
+  const previewDirtyRef = useRef(false);
   const seqRef = useRef(0);
 
   const pushSystemItem = (body: string, label = 'SYSTEM', isDiff = false): void => {
@@ -130,14 +133,14 @@ export const App: React.FC<AppProps> = ({
     ]);
   };
 
-  // Coalesce streaming text deltas at ~20fps (50ms)
+  // Coalesce streaming text deltas at ~10fps (100ms), ONLY re-rendering when dirty
   useEffect(() => {
     const timer = setInterval(() => {
-      const buf = previewBufRef.current;
-      if (Object.keys(buf).length > 0) {
-        setLivePreview({ ...buf });
+      if (previewDirtyRef.current) {
+        previewDirtyRef.current = false;
+        setLivePreview({ ...previewBufRef.current });
       }
-    }, 50);
+    }, 100);
     return () => clearInterval(timer);
   }, []);
 
@@ -185,6 +188,7 @@ export const App: React.FC<AppProps> = ({
         setAgentStates((prev) => ({ ...prev, [a]: { status: 'running', detail: `tool:${ev.toolName}` } }));
       } else if (ev.type === 'text.delta') {
         previewBufRef.current[a] = ((previewBufRef.current[a] ?? '') + ev.delta).slice(-400);
+        previewDirtyRef.current = true;
         setAgentStates((prev) => ({ ...prev, [a]: { status: 'streaming', detail: 'streaming...' } }));
       } else if (ev.type === 'turn.completed') {
         delete previewBufRef.current[a];
@@ -239,29 +243,40 @@ export const App: React.FC<AppProps> = ({
   );
 
   const handleSubmit = (raw: string): void => {
-    const trimmed = raw.trim();
     setInput('');
-    if (!trimmed) return;
+    const cmd = parseUserInput(raw);
+    if (cmd.kind === 'empty') return;
 
-    if (trimmed === '/quit' || trimmed === '/exit') {
+    if (cmd.kind === 'quit') {
       service.stop('all');
       onExitCleanup();
       exit();
       return;
     }
-    if (trimmed === '/help') {
+    if (cmd.kind === 'help') {
       pushSystemItem(HELP_TEXT, 'HELP');
       return;
     }
-    if (trimmed === '/findings') {
+    if (cmd.kind === 'agents') {
+      const lines = service.room.agents.map((a) => {
+        const st = agentStates[a] ?? { status: 'idle', detail: '' };
+        return `  - @${a} (${st.detail || st.status})`;
+      });
+      pushSystemItem(
+        `Active agents in room ${service.room.id}:\n${lines.join('\n')}\nUse @claude <msg>, @codex <msg>, @agy <msg>, or @all <msg>.`,
+        'AGENTS',
+      );
+      return;
+    }
+    if (cmd.kind === 'findings') {
       setShowFindings((v) => !v);
       return;
     }
-    if (trimmed === '/summary') {
+    if (cmd.kind === 'summary') {
       pushSystemItem(service.buildLocalSummary(), 'SUMMARY');
       return;
     }
-    if (trimmed === '/diff') {
+    if (cmd.kind === 'diff') {
       const latest = taskService?.getLatestTask();
       if (!latest || !latest.activeRevisionId) {
         setNotice({ type: 'warning', text: 'No active task revision to diff yet.' });
@@ -270,31 +285,30 @@ export const App: React.FC<AppProps> = ({
       pushSystemItem(`Active revision: ${latest.activeRevisionId} (state: ${latest.state})`, 'DIFF', true);
       return;
     }
-    if (trimmed === '/pause') {
+    if (cmd.kind === 'pause') {
       service.pause();
       return;
     }
-    if (trimmed === '/continue') {
+    if (cmd.kind === 'continue') {
       void service.continueScheduling().catch((err: unknown) => {
         pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
       });
       return;
     }
-    if (trimmed === '/unseal') {
+    if (cmd.kind === 'unseal') {
       service.unsealStraggler();
       return;
     }
-    if (trimmed.startsWith('/recover')) {
-      const sub = trimmed.slice(8).trim().toLowerCase();
-      if (sub === 'retry') {
+    if (cmd.kind === 'recover') {
+      if (cmd.sub === 'retry') {
         void service.recoverRetryInterrupted().catch((err: unknown) => {
           pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
         });
-      } else if (sub === 'unseal') {
+      } else if (cmd.sub === 'unseal') {
         void service.recoverUnsealAndContinue().catch((err: unknown) => {
           pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
         });
-      } else if (sub === 'r2') {
+      } else if (cmd.sub === 'r2') {
         void service.recoverResumePendingR2().catch((err: unknown) => {
           pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
         });
@@ -303,26 +317,17 @@ export const App: React.FC<AppProps> = ({
       }
       return;
     }
-    if (trimmed.startsWith('/stop')) {
-      const arg = trimmed.slice(5).trim();
-      if (arg === 'claude' || arg === 'codex' || arg === 'agy') {
-        service.stop(arg);
-      } else {
-        service.stop('all');
-      }
+    if (cmd.kind === 'stop') {
+      service.stop(cmd.target);
       return;
     }
-    if (trimmed.startsWith('/budget')) {
-      const m = /^\+?\s*(\d+)$/.exec(trimmed.slice(7).trim());
-      const delta = m ? Number.parseInt(m[1], 10) : 12;
-      service.extendBudget(delta);
+    if (cmd.kind === 'budget') {
+      service.extendBudget(cmd.delta);
       return;
     }
-    if (trimmed.startsWith('/export')) {
-      const parts = trimmed.split(/\s+/).slice(1);
-      const format = parts[0] === 'jsonl' ? 'jsonl' : 'md';
-      const defaultPath = path.join(dataDir, 'exports', `${service.room.id}.${format}`);
-      const targetPath = parts[1] ? path.resolve(parts[1]) : defaultPath;
+    if (cmd.kind === 'export') {
+      const defaultPath = path.join(dataDir, 'exports', `${service.room.id}.${cmd.format}`);
+      const targetPath = cmd.targetPath ? path.resolve(cmd.targetPath) : defaultPath;
       if (!allowInRepoExport && isPathInside(targetPath, service.room.repoPath)) {
         pushSystemItem(
           `Refused to export inside target repo (${targetPath}). Choose a path outside the repo or restart with --allow-in-repo.`,
@@ -331,20 +336,27 @@ export const App: React.FC<AppProps> = ({
         return;
       }
       fs.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(targetPath, service.exportRoom(format), 'utf8');
-      pushSystemItem(`Exported ${format} transcript to ${targetPath}`, 'EXPORT');
+      fs.writeFileSync(targetPath, service.exportRoom(cmd.format), 'utf8');
+      pushSystemItem(`Exported ${cmd.format} transcript to ${targetPath}`, 'EXPORT');
+      return;
+    }
+    if (cmd.kind === 'unknown_slash') {
+      setNotice({
+        type: 'warning',
+        text: `Unknown command "${cmd.command}". Type /help for available commands (0 turns spent).`,
+      });
       return;
     }
 
     if (service.isRunning() && round?.phase === 'blind_r1') {
-      if (trimmed.startsWith('/') || trimmed.startsWith('@')) {
+      if (cmd.kind !== 'plain') {
         setNotice({
           type: 'warning',
           text: 'Blind Round 1 is running: only plain-text R2 steering notes or /stop, /pause, /unseal are allowed.',
         });
         return;
       }
-      service.queueSteeringNote(trimmed);
+      service.queueSteeringNote(cmd.body);
       setQueuedSteeringCount((c) => c + 1);
       return;
     }
@@ -354,14 +366,13 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    if (trimmed.startsWith('/task')) {
-      const desc = trimmed.slice(5).trim();
-      if (!desc || !taskService) {
+    if (cmd.kind === 'task') {
+      if (!cmd.description || !taskService) {
         setNotice({ type: 'warning', text: taskService ? 'Usage: /task <description>' : 'Task service unavailable.' });
         return;
       }
       void taskService
-        .startTask(desc)
+        .startTask(cmd.description)
         .then(({ task, approval }) => {
           pushSystemItem(
             `Plan v${task.planVersion} (${approval.id}):\n${task.planText ?? ''}\n\nRun /approve ${approval.id} or /reject ${approval.id} <reason>`,
@@ -374,14 +385,13 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    if (trimmed.startsWith('/approve')) {
-      const id = trimmed.slice(8).trim();
-      if (!id || !taskService) {
+    if (cmd.kind === 'approve') {
+      if (!cmd.id || !taskService) {
         setNotice({ type: 'warning', text: 'Usage: /approve <approval-id>' });
         return;
       }
       void taskService
-        .approve(id)
+        .approve(cmd.id)
         .then((res) => {
           if (res.revision?.diffPatch) {
             pushSystemItem(res.revision.diffPatch.slice(0, 6000), `DIFF ${res.revision.id}`, true);
@@ -397,16 +407,13 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    if (trimmed.startsWith('/reject')) {
-      const rest = trimmed.slice(7).trim();
-      const [id, ...reasonParts] = rest.split(/\s+/);
-      const reason = reasonParts.join(' ') || 'Rejected by owner';
-      if (!id || !taskService) {
+    if (cmd.kind === 'reject') {
+      if (!cmd.id || !taskService) {
         setNotice({ type: 'warning', text: 'Usage: /reject <approval-id> <reason>' });
         return;
       }
       void taskService
-        .rejectApproval(id, reason)
+        .rejectApproval(cmd.id, cmd.reason)
         .then(({ task, nextApproval }) => {
           pushSystemItem(
             `Revised Plan v${task.planVersion} (${nextApproval.id}):\n${task.planText ?? ''}`,
@@ -419,57 +426,47 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    if (trimmed.startsWith('/apply')) {
-      const revId = trimmed.slice(6).trim();
-      if (!revId || !taskService) {
+    if (cmd.kind === 'apply') {
+      if (!cmd.revisionId || !taskService) {
         setNotice({ type: 'warning', text: 'Usage: /apply <revision-id>' });
         return;
       }
       try {
-        const done = taskService.applyRevision(revId);
-        pushSystemItem(`Applied ${revId} cleanly. Task ${done.id} is COMPLETED.`, 'APPLY');
+        const done = taskService.applyRevision(cmd.revisionId);
+        pushSystemItem(`Applied ${cmd.revisionId} cleanly. Task ${done.id} is COMPLETED.`, 'APPLY');
       } catch (err: unknown) {
         pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
       }
       return;
     }
 
-    if (trimmed.startsWith('/debate')) {
-      const topic = trimmed.slice(7).trim();
-      if (!topic) {
+    if (cmd.kind === 'debate') {
+      if (!cmd.topic) {
         setNotice({ type: 'warning', text: 'Usage: /debate <topic>' });
         return;
       }
-      void service.runDebateOrAudit('debate', topic).catch((err: unknown) => {
+      void service.runDebateOrAudit('debate', cmd.topic).catch((err: unknown) => {
         pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
       });
       return;
     }
 
-    if (trimmed.startsWith('/audit')) {
-      const rest = trimmed.slice(6).trim();
-      const [first, ...others] = rest ? rest.split(/\s+/) : [];
-      const mode: AuditMode | undefined =
-        first === 'diff' || first === 'staged' || first === 'head' ? first : undefined;
-      const focus = mode ? others.join(' ') : rest;
-      void service.runDebateOrAudit('audit', focus, mode).catch((err: unknown) => {
+    if (cmd.kind === 'audit') {
+      void service.runDebateOrAudit('audit', cmd.focus, cmd.mode).catch((err: unknown) => {
         pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
       });
       return;
     }
 
-    const mentionMatch = /^@(claude|codex|agy|all)\s+([\s\S]+)$/i.exec(trimmed);
-    if (mentionMatch) {
-      const target = mentionMatch[1].toLowerCase();
-      const body = mentionMatch[2].trim();
-      const recipients: AgentId[] = target === 'all' ? [...service.room.agents] : [target as AgentId];
-      void service.runFreeform(recipients, body).catch((err: unknown) => {
+    if (cmd.kind === 'mention') {
+      const recipients: AgentId[] = cmd.target === 'all' ? [...service.room.agents] : [cmd.target];
+      void service.runFreeform(recipients, cmd.body).catch((err: unknown) => {
         pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
       });
       return;
     }
 
-    void service.runFreeform([...service.room.agents], trimmed).catch((err: unknown) => {
+    void service.runFreeform([...service.room.agents], cmd.body).catch((err: unknown) => {
       pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
     });
   };
@@ -491,7 +488,7 @@ export const App: React.FC<AppProps> = ({
             <Box key={item.key} flexDirection="column" marginBottom={1}>
               <Box gap={1}>
                 <Text bold color={senderColor}>
-                  ● {item.sender}
+                  [{item.sender}]
                 </Text>
                 {item.meta ? <Text color={theme.muted}>({item.meta})</Text> : null}
               </Box>
@@ -513,56 +510,44 @@ export const App: React.FC<AppProps> = ({
         }}
       </Static>
 
-      {/* 2. Dynamic bottom region */}
-      <Box flexDirection="column" borderStyle="round" borderColor={frameBorderColor} paddingX={1}>
+      {/* 2. Dynamic bottom region (strict 1-col ASCII glyphs + single-line truncation to prevent Ink ghost borders) */}
+      <Box flexDirection="column" borderStyle="single" borderColor={frameBorderColor} paddingX={1}>
         <Box justifyContent="space-between">
-          <Box gap={1}>
-            <Text bold color={theme.brand}>
-              ☕ CHAYXONA
-            </Text>
-            <Text color={theme.muted}>/</Text>
+          <Text wrap="truncate-end">
+            <Text bold color={theme.brand}>CHAYXONA</Text>
+            <Text color={theme.muted}> / </Text>
             <Text bold>{path.basename(service.room.repoPath)}</Text>
-            <Text color={theme.muted}>({service.room.id})</Text>
-            <Text bold color={theme.readOnlyBadge}>
-              [READ-ONLY]
-            </Text>
-          </Box>
-          <Box gap={1}>
-            <Text bold color={isBlind ? theme.borderBlind : theme.phaseBadge}>
-              {phaseLabel}
-            </Text>
-            <Text color={theme.muted}>
-              · Turns {budget.used}/{budget.max}
-            </Text>
-          </Box>
+            <Text color={theme.muted}> ({service.room.id}) </Text>
+            <Text bold color={theme.readOnlyBadge}>[READ-ONLY]</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text bold color={isBlind ? theme.borderBlind : theme.phaseBadge}>{phaseLabel}</Text>
+            <Text color={theme.muted}> | Turns {budget.used}/{budget.max}</Text>
+          </Text>
         </Box>
 
-        <Box gap={2} flexWrap="wrap" marginTop={0}>
+        <Box gap={2}>
           {service.room.agents.map((a) => {
             const st = agentStates[a] ?? { status: 'idle', detail: '' };
             const { glyph, color: glyphColor } = theme.statusGlyph(st.status);
             const agentColor = theme.senderColor(a);
             return (
-              <Box key={a} gap={1}>
-                <Text color={glyphColor}>{glyph}</Text>
-                <Text bold color={st.status === 'idle' ? theme.muted : agentColor}>
-                  {a.toUpperCase()}
-                </Text>
-                <Text color={st.detail.startsWith('tool:') ? theme.tool : theme.muted}>
-                  {st.detail || st.status}
-                </Text>
-              </Box>
+              <Text key={a} wrap="truncate-end">
+                <Text color={glyphColor}>{glyph} </Text>
+                <Text bold color={st.status === 'idle' ? theme.muted : agentColor}>{a.toUpperCase()}</Text>
+                <Text color={st.detail.startsWith('tool:') ? theme.tool : theme.muted}> {st.detail || st.status}</Text>
+              </Text>
             );
           })}
         </Box>
 
         {isBlind ? (
           <Box flexDirection="column" marginTop={1}>
-            <Text bold color={theme.borderBlind}>
-              ◆ BLIND ROUND 1 — Takes sealed until all finish ([Ctrl+U] unseal straggler)
+            <Text bold color={theme.borderBlind} wrap="truncate-end">
+              BLIND ROUND 1 - Takes sealed until all finish ([Ctrl+U] unseal straggler)
             </Text>
             {queuedSteeringCount > 0 ? (
-              <Text color={theme.phaseBadge}>↳ Queued for R2: {queuedSteeringCount} steering note(s)</Text>
+              <Text color={theme.phaseBadge} wrap="truncate-end">Queued for R2: {queuedSteeringCount} steering note(s)</Text>
             ) : null}
           </Box>
         ) : null}
@@ -571,18 +556,16 @@ export const App: React.FC<AppProps> = ({
           <Box flexDirection="column" marginTop={1}>
             {Object.entries(livePreview).map(([agent, preview]) =>
               preview ? (
-                <Box key={agent} gap={1}>
-                  <Text bold color={theme.senderColor(agent)}>
-                    {agent.toUpperCase()}
-                  </Text>
-                  <Text color={theme.muted}>{preview.replace(/\s+/g, ' ').slice(-110)}</Text>
-                </Box>
+                <Text key={agent} wrap="truncate-end">
+                  <Text bold color={theme.senderColor(agent)}>{agent.toUpperCase()}: </Text>
+                  <Text color={theme.muted}>{preview.replace(/\s+/g, ' ').slice(-90)}</Text>
+                </Text>
               ) : null,
             )}
           </Box>
         ) : null}
 
-        {notice ? <Text color={noticeColor}>ℹ {notice.text}</Text> : null}
+        {notice ? <Text color={noticeColor} wrap="truncate-end">[!] {notice.text}</Text> : null}
 
         {showFindings ? (
           <FindingsPanel
@@ -596,17 +579,17 @@ export const App: React.FC<AppProps> = ({
         <Box marginTop={1} justifyContent="space-between">
           <Box flexGrow={1}>
             <Text bold color={isBlind ? theme.borderBlind : theme.prompt}>
-              {isBlind ? '[R2 steer] › ' : '› '}
+              {isBlind ? '[R2 steer] > ' : '> '}
             </Text>
             <TextInput
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
               focus={!showFindings}
-              placeholder={isBlind ? 'Type a steering note for Round 2...' : '/debate <topic>, /audit, /task, @agent, or /help'}
+              placeholder={isBlind ? 'Type a steering note for Round 2...' : '/debate, /audit, /task, /agents, @agent, or /help'}
             />
           </Box>
-          <Text color={findings.length > 0 && !isBlind ? theme.brand : theme.muted}>
+          <Text color={findings.length > 0 && !isBlind ? theme.brand : theme.muted} wrap="truncate-end">
             [Tab] Findings({isBlind ? 'sealed' : findings.length})
           </Text>
         </Box>

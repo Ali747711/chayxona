@@ -90,17 +90,17 @@ export function createTheme(env: NodeJS.ProcessEnv = process.env): TuiTheme {
     statusGlyph(status: string): { glyph: string; color: InkColor | undefined } {
       switch (status) {
         case 'running':
-          return { glyph: '◉', color: c('yellow') };
+          return { glyph: '*', color: c('yellow') };
         case 'streaming':
-          return { glyph: '▸', color: c('greenBright') };
+          return { glyph: '>', color: c('greenBright') };
         case 'done':
-          return { glyph: '✓', color: c('green') };
+          return { glyph: '+', color: c('green') };
         case 'error':
-          return { glyph: '✕', color: c('redBright') };
+          return { glyph: 'x', color: c('redBright') };
         case 'cancelled':
-          return { glyph: '⊘', color: c('yellow') };
+          return { glyph: '-', color: c('yellow') };
         default:
-          return { glyph: '○', color: c('gray') };
+          return { glyph: 'o', color: c('gray') };
       }
     },
 

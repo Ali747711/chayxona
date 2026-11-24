@@ -38,19 +38,19 @@ export const FindingsPanel: React.FC<FindingsPanelProps> = ({ findings, active, 
   const dissentCount = flat.filter((f) => f.item.dissentsFrom.length > 0).length;
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.borderActive} paddingX={1} marginTop={1}>
+    <Box flexDirection="column" borderStyle="single" borderColor={theme.borderActive} paddingX={1} marginTop={1}>
       <Box justifyContent="space-between">
         <Box gap={1}>
-          <Text bold color={theme.brand}>
-            ◆ FINDINGS &amp; DISSENT ({flat.length})
+          <Text bold color={theme.brand} wrap="truncate-end">
+            FINDINGS &amp; DISSENT ({flat.length})
           </Text>
           {dissentCount > 0 ? (
-            <Text bold color={theme.dissent}>
-              · {dissentCount} dissent
+            <Text bold color={theme.dissent} wrap="truncate-end">
+              | {dissentCount} dissent
             </Text>
           ) : null}
         </Box>
-        <Text color={theme.muted}>[j/k] navigate · [Tab/Esc] back to composer</Text>
+        <Text color={theme.muted} wrap="truncate-end">[j/k] nav | [Tab/Esc] back</Text>
       </Box>
       {flat.length === 0 ? (
         <Text color={theme.muted}>No visible findings yet. Run /debate or /audit to gather cross-model findings.</Text>
@@ -67,7 +67,7 @@ export const FindingsPanel: React.FC<FindingsPanelProps> = ({ findings, active, 
             <Box key={f.id} flexDirection="column" marginTop={idx === 0 ? 1 : 0}>
               <Box gap={1}>
                 <Text bold color={isSelected ? theme.brand : theme.muted}>
-                  {isSelected ? '▸' : ' '}
+                  {isSelected ? '>' : ' '}
                 </Text>
                 <Text bold color={sevColor} inverse={isSelected}>
                   [{f.severity.toUpperCase()}]
@@ -79,12 +79,12 @@ export const FindingsPanel: React.FC<FindingsPanelProps> = ({ findings, active, 
                 <Text bold={isSelected}>{f.summary}</Text>
                 {f.dissentsFrom.length > 0 ? (
                   <Text bold color={theme.dissent}>
-                    ⚡ DISSENT vs {f.dissentsFrom.join(',')}
+                    [DISSENT vs {f.dissentsFrom.join(',')}]
                   </Text>
                 ) : null}
               </Box>
               {isSelected && f.evidence ? (
-                <Text color={theme.muted}>    ↳ evidence: {f.evidence}</Text>
+                <Text color={theme.muted}>    evidence: {f.evidence}</Text>
               ) : null}
             </Box>
           );
