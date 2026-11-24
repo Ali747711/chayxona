@@ -10,6 +10,7 @@ import { ClaudeAdapter } from '../adapters/claude.js';
 import { CodexAdapter } from '../adapters/codex.js';
 import type { AgentAdapter } from '../adapters/contract.js';
 import { FakeAgentAdapter } from '../adapters/fake.js';
+import { loadProjectConfig, writeDefaultConfig } from '../config/config.js';
 import { ALL_AGENTS, type AgentId, type RoomRecord } from '../domain/types.js';
 import { inspectRepo, type AuditMode } from '../orchestrator/git-inspector.js';
 import { RoomService } from '../orchestrator/room-service.js';
@@ -123,19 +124,30 @@ program
   });
 
 program
+  .command('init')
+  .description('Create a default .chayxona.json config file in the current repository')
+  .option('--force', 'Overwrite existing .chayxona.json', false)
+  .action((opts: { force?: boolean }) => {
+    const repo = inspectRepo(process.cwd());
+    const filePath = writeDefaultConfig(repo.repoPath, Boolean(opts.force));
+    process.stdout.write(`Created ${filePath}\n`);
+  });
+
+program
   .command('start')
   .description('Start an interactive read-only Chayxona room in the current directory')
   .option('--agents <list>', 'Comma-separated agents (claude,codex,agy)')
-  .option('--max-concurrency <n>', 'Max concurrent read-only turns', '3')
-  .option('--turn-timeout <dur>', 'Per-turn timeout (e.g. 180s, 3m)', '180s')
-  .option('--max-turns <n>', 'Max turns per room', '24')
+  .option('--max-concurrency <n>', 'Max concurrent read-only turns')
+  .option('--turn-timeout <dur>', 'Per-turn timeout (e.g. 180s, 3m)')
+  .option('--max-turns <n>', 'Max turns per room')
   .option('--solo', 'Allow starting with 1 agent for diagnostics', false)
   .option('--fake', 'Use deterministic fake providers (demo / local testing)', false)
   .option('--allow-in-repo', 'Allow data/export paths inside the target repo', false)
   .action(async (opts) => {
     const redactor = new SecretRedactor();
     const repo = inspectRepo(process.cwd());
-    const requested = parseAgentsFlag(opts.agents);
+    const { config } = loadProjectConfig(repo.repoPath);
+    const requested = opts.agents ? parseAgentsFlag(opts.agents) : config.agents;
     const allAdapters = createAdapters(redactor, Boolean(opts.fake));
     const { activeAgents, activeAdapters } = await resolveReadyAdapters(requested, allAdapters, Boolean(opts.solo));
 
@@ -148,18 +160,20 @@ program
       repoPath: repo.repoPath,
       baseSha: repo.baseSha,
       status: 'active',
-      maxTurns: Number.parseInt(String(opts.maxTurns), 10) || 24,
+      maxTurns: opts.maxTurns ? Number.parseInt(String(opts.maxTurns), 10) : config.limits.maxTurns,
       agents: activeAgents,
       solo: Boolean(opts.solo),
-      turnTimeoutMs: parseTimeoutMs(opts.turnTimeout),
-      maxConcurrency: Number.parseInt(String(opts.maxConcurrency), 10) || 3,
+      turnTimeoutMs: opts.turnTimeout ? parseTimeoutMs(opts.turnTimeout) : config.limits.turnTimeoutMs,
+      maxConcurrency: opts.maxConcurrency
+        ? Number.parseInt(String(opts.maxConcurrency), 10)
+        : config.limits.maxConcurrency,
       createdAt: now,
       updatedAt: now,
     };
     db.createRoom(room);
 
     const service = new RoomService(room, db, activeAdapters, redactor);
-    const taskService = new TaskService(room, dataDir, db, activeAdapters, redactor);
+    const taskService = new TaskService(room, dataDir, db, activeAdapters, redactor, config.checks);
     const cleanup = (): void => {
       db.releaseWriterLease(roomId);
       lock.release();
