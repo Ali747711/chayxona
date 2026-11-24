@@ -13,6 +13,7 @@ import { FakeAgentAdapter } from '../adapters/fake.js';
 import { ALL_AGENTS, type AgentId, type RoomRecord } from '../domain/types.js';
 import { inspectRepo, type AuditMode } from '../orchestrator/git-inspector.js';
 import { RoomService } from '../orchestrator/room-service.js';
+import { TaskService } from '../orchestrator/task-service.js';
 import { ChayxonaDB, isPathInside, resolveDataDir } from '../persistence/db.js';
 import { RoomLock } from '../persistence/room-lock.js';
 import { SecretRedactor } from '../security/redactor.js';
@@ -158,7 +159,9 @@ program
     db.createRoom(room);
 
     const service = new RoomService(room, db, activeAdapters, redactor);
+    const taskService = new TaskService(room, dataDir, db, activeAdapters, redactor);
     const cleanup = (): void => {
+      db.releaseWriterLease(roomId);
       lock.release();
       db.close();
     };
@@ -166,6 +169,7 @@ program
     const instance = render(
       React.createElement(App, {
         service,
+        taskService,
         dataDir,
         initialMessages: [],
         initialFindings: [],

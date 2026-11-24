@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentEvent, AgentId, FindingRecord, MessageRecord, RoundRecord } from '../domain/types.js';
 import type { RoomService, RoomStatusEvent } from '../orchestrator/room-service.js';
+import type { TaskService } from '../orchestrator/task-service.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
 import { isPathInside } from '../persistence/db.js';
 import { FindingsPanel } from './FindingsPanel.js';
@@ -18,6 +19,7 @@ export interface StaticEntry {
 
 export interface AppProps {
   service: RoomService;
+  taskService?: TaskService;
   dataDir: string;
   initialMessages: MessageRecord[];
   initialFindings: FindingRecord[];
@@ -35,6 +37,9 @@ const HELP_TEXT = [
   'Commands:',
   '  /debate <topic>          Blind Round 1 -> Cross-Exam Round 2 debate',
   '  /audit [diff|staged|head] Independent read-only audit',
+  '  /task <description>      Plan -> approve -> isolated worktree write -> review -> /apply',
+  '  /approve <id> | /reject <id> <reason>  Resolve pending plan or final approval',
+  '  /apply <revision-id>     Apply approved worktree patch to original repo',
   '  @claude|@codex|@agy <m>  Targeted single-agent turn',
   '  @all <msg> or plain text Broadcast freeform turn (or R2 steering note during Blind R1)',
   '  /summary                 Deterministic local summary of findings & dissent',
@@ -50,6 +55,7 @@ const HELP_TEXT = [
 
 export const App: React.FC<AppProps> = ({
   service,
+  taskService,
   dataDir,
   initialMessages,
   initialFindings,
@@ -330,6 +336,83 @@ export const App: React.FC<AppProps> = ({
 
     if (service.isRunning()) {
       setNotice('Turns are still running. Wait for completion or run /stop.');
+      return;
+    }
+
+    if (trimmed.startsWith('/task')) {
+      const desc = trimmed.slice(5).trim();
+      if (!desc || !taskService) {
+        setNotice(taskService ? 'Usage: /task <description>' : 'Task service unavailable in this session.');
+        return;
+      }
+      void taskService
+        .startTask(desc)
+        .then(({ task, approval }) => {
+          pushSystemItem(
+            `Plan v${task.planVersion} (${approval.id}):\n${task.planText ?? ''}\n\nRun /approve ${approval.id} or /reject ${approval.id} <reason>`,
+            `TASK ${task.id}`,
+          );
+        })
+        .catch((err: unknown) => {
+          pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+        });
+      return;
+    }
+
+    if (trimmed.startsWith('/approve')) {
+      const id = trimmed.slice(8).trim();
+      if (!id || !taskService) {
+        setNotice('Usage: /approve <approval-id>');
+        return;
+      }
+      void taskService
+        .approve(id)
+        .then((res) => {
+          pushSystemItem(
+            `Task ${res.task.id} -> ${res.task.state}${res.revision ? ` (rev ${res.revision.id})` : ''}${res.finalApproval ? `\nRun /approve ${res.finalApproval.id} to unlock /apply.` : ''}`,
+            'TASK',
+          );
+        })
+        .catch((err: unknown) => {
+          pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+        });
+      return;
+    }
+
+    if (trimmed.startsWith('/reject')) {
+      const rest = trimmed.slice(7).trim();
+      const [id, ...reasonParts] = rest.split(/\s+/);
+      const reason = reasonParts.join(' ') || 'Rejected by owner';
+      if (!id || !taskService) {
+        setNotice('Usage: /reject <approval-id> <reason>');
+        return;
+      }
+      void taskService
+        .rejectApproval(id, reason)
+        .then(({ task, nextApproval }) => {
+          pushSystemItem(
+            `Revised Plan v${task.planVersion} (${nextApproval.id}):\n${task.planText ?? ''}`,
+            `TASK ${task.id}`,
+          );
+        })
+        .catch((err: unknown) => {
+          pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+        });
+      return;
+    }
+
+    if (trimmed.startsWith('/apply')) {
+      const revId = trimmed.slice(6).trim();
+      if (!revId || !taskService) {
+        setNotice('Usage: /apply <revision-id>');
+        return;
+      }
+      try {
+        const done = taskService.applyRevision(revId);
+        pushSystemItem(`Applied ${revId} cleanly. Task ${done.id} is COMPLETED.`, 'APPLY');
+      } catch (err: unknown) {
+        pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+      }
       return;
     }
 
