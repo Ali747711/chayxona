@@ -17,6 +17,21 @@ export const CLAUDE_READONLY_ARGS = [
   '',
 ] as const;
 
+export const CLAUDE_WRITE_ARGS = [
+  '-p',
+  '--output-format',
+  'stream-json',
+  '--verbose',
+  '--tools',
+  'Read,Glob,Grep,Edit,Write',
+  '--permission-mode',
+  'acceptEdits',
+  '--strict-mcp-config',
+  '--disable-slash-commands',
+  '--setting-sources',
+  '',
+] as const;
+
 export function parseClaudeJsonlLine(
   line: string,
   base: { roomId: string; roundId: number; turnId: string; agentId: 'claude' },
@@ -138,9 +153,10 @@ export class ClaudeAdapter implements AgentAdapter {
       }
     };
 
+    const args = input.permissions === 'workspace-write' ? [...CLAUDE_WRITE_ARGS] : [...CLAUDE_READONLY_ARGS];
     const runPromise = runSubprocessLines({
       command: this.command,
-      args: [...CLAUDE_READONLY_ARGS],
+      args,
       cwd: input.cwd,
       stdinText: input.prompt,
       timeoutMs: input.timeoutMs,

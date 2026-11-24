@@ -13,6 +13,15 @@ export const CODEX_READONLY_ARGS = [
   '-',
 ] as const;
 
+export const CODEX_WRITE_ARGS = [
+  'exec',
+  '--json',
+  '-s',
+  'workspace-write',
+  '--skip-git-repo-check',
+  '-',
+] as const;
+
 export function parseCodexJsonlLine(
   line: string,
   base: { roomId: string; roundId: number; turnId: string; agentId: 'codex' },
@@ -134,9 +143,10 @@ export class CodexAdapter implements AgentAdapter {
       }
     };
 
+    const args = input.permissions === 'workspace-write' ? [...CODEX_WRITE_ARGS] : [...CODEX_READONLY_ARGS];
     const runPromise = runSubprocessLines({
       command: this.command,
-      args: [...CODEX_READONLY_ARGS],
+      args,
       cwd: input.cwd,
       stdinText: input.prompt,
       timeoutMs: input.timeoutMs,

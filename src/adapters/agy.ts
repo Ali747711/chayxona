@@ -18,6 +18,18 @@ export function buildAgyReadOnlyArgs(prompt: string, timeoutMs: number): string[
   ];
 }
 
+export function buildAgyArgs(
+  prompt: string,
+  timeoutMs: number,
+  permissions: 'read-only' | 'workspace-write' = 'read-only',
+): string[] {
+  const base = buildAgyReadOnlyArgs(prompt, timeoutMs);
+  if (permissions === 'workspace-write') {
+    return ['--mode', 'accept-edits', ...base];
+  }
+  return base;
+}
+
 export function parseAgyJsonlLine(
   line: string,
   base: { roomId: string; roundId: number; turnId: string; agentId: 'agy' },
@@ -149,7 +161,7 @@ export class AgyAdapter implements AgentAdapter {
 
     const runPromise = runSubprocessLines({
       command: this.command,
-      args: buildAgyReadOnlyArgs(boundedPrompt, input.timeoutMs),
+      args: buildAgyArgs(boundedPrompt, input.timeoutMs, input.permissions ?? 'read-only'),
       cwd: input.cwd,
       timeoutMs: input.timeoutMs,
       signal,
