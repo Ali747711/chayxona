@@ -399,6 +399,8 @@ program
     const allAdapters = createAdapters(redactor, Boolean(opts.fake));
     const { activeAdapters } = await resolveReadyAdapters(room.agents, allAdapters, room.solo);
 
+    const { config } = loadProjectConfig(room.repoPath);
+    const taskService = new TaskService(room, dataDir, db, activeAdapters, redactor, config.checks);
     const service = new RoomService(room, db, activeAdapters, redactor);
     const initialMessages = db.listMessages(roomId, { includeSealed: false });
     const initialFindings = db.listVisibleFindings(roomId);
@@ -422,6 +424,7 @@ program
     const instance = render(
       React.createElement(App, {
         service,
+        taskService,
         dataDir,
         initialMessages,
         initialFindings,

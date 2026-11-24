@@ -188,4 +188,95 @@ describe('TaskService v2 E2E (Plan -> Approve -> Isolated Write -> Review Loop -
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it('supports --auto-plan, parameterless /approve and /apply, and worktree auto-cleanup', async () => {
+    const repo = makeCleanRepo();
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chayxona-task-autop-'));
+    const db = new ChayxonaDB(':memory:');
+    const room: RoomRecord = {
+      id: 'r-autop',
+      repoPath: repo,
+      baseSha: 'head',
+      status: 'active',
+      maxTurns: 24,
+      agents: ['claude'],
+      solo: true,
+      turnTimeoutMs: 5000,
+      maxConcurrency: 3,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    db.createRoom(room);
+
+    const adapters = new Map<AgentId, AgentAdapter>([
+      [
+        'claude',
+        new FakeAgentAdapter('claude', (input) => {
+          if (input.permissions === 'workspace-write') {
+            fs.writeFileSync(path.join(input.cwd, 'calc.ts'), 'export function add(a: number, b: number) { return a + b; }\n');
+            return { chunks: ['Fixed calculation'] };
+          }
+          return { chunks: ['Clean plan'] };
+        }),
+      ],
+    ]);
+
+    const taskSvc = new TaskService(room, dataDir, db, adapters, new SecretRedactor({}));
+    try {
+      // 1. Auto-plan: goes straight through planning and implementation
+      const started = await taskSvc.startTask('Auto-plan task', { autoPlan: true });
+      expect(started.task.state).toBe('AWAITING_FINAL_APPROVAL');
+      expect(started.revision).toBeDefined();
+
+      // 2. Parameterless /apply: auto-approves final approval and applies atomically
+      const completed = taskSvc.applyRevision();
+      expect(completed.state).toBe('COMPLETED');
+      expect(fs.readFileSync(path.join(repo, 'calc.ts'), 'utf8')).toContain('return a + b;');
+
+      // 3. Worktree handle cleaned up from active map and unlinked
+      expect(taskSvc.getWorktreeHandle(started.task.id)).toBeNull();
+    } finally {
+      db.close();
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reject() cancels task and cleans up worktree immediately', async () => {
+    const repo = makeCleanRepo();
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chayxona-task-cancel-'));
+    const db = new ChayxonaDB(':memory:');
+    const room: RoomRecord = {
+      id: 'r-cancel',
+      repoPath: repo,
+      baseSha: 'head',
+      status: 'active',
+      maxTurns: 24,
+      agents: ['claude'],
+      solo: true,
+      turnTimeoutMs: 5000,
+      maxConcurrency: 3,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    db.createRoom(room);
+
+    const adapters = new Map<AgentId, AgentAdapter>([
+      [
+        'claude',
+        new FakeAgentAdapter('claude', () => ({ chunks: ['Plan text'] })),
+      ],
+    ]);
+
+    const taskSvc = new TaskService(room, dataDir, db, adapters, new SecretRedactor({}));
+    try {
+      await taskSvc.startTask('Task to cancel');
+      const cancelled = await taskSvc.reject();
+      expect(cancelled.task.state).toBe('CANCELLED');
+    } finally {
+      db.close();
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });

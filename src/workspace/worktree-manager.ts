@@ -191,3 +191,50 @@ export function cleanupTaskWorktree(dataDir: string, originalRepoPath: string, h
     // ignore if branch already removed
   }
 }
+
+/**
+ * Scans $CHAYXONA_DATA_DIR/worktrees and prunes abandoned task directories older than maxAgeMs
+ * or belonging to rooms not in activeRoomIds.
+ */
+export function cleanOrphanedWorktrees(
+  dataDir: string,
+  repos: Array<{ repoPath: string; activeRoomIds: Set<string> }>,
+  maxAgeMs = 24 * 60 * 60 * 1000,
+): number {
+  const worktreesRoot = path.join(dataDir, 'worktrees');
+  if (!fs.existsSync(worktreesRoot)) return 0;
+  let cleaned = 0;
+  const now = Date.now();
+
+  try {
+    for (const roomDirName of fs.readdirSync(worktreesRoot)) {
+      const roomPath = path.join(worktreesRoot, roomDirName);
+      if (!fs.statSync(roomPath).isDirectory()) continue;
+
+      for (const taskDirName of fs.readdirSync(roomPath)) {
+        const taskPath = path.join(roomPath, taskDirName);
+        const stat = fs.statSync(taskPath);
+        if (!stat.isDirectory()) continue;
+
+        const isOld = now - stat.mtimeMs > maxAgeMs;
+        const repo = repos.find((r) => r.activeRoomIds.has(roomDirName));
+        if (isOld || !repo) {
+          fs.rmSync(taskPath, { recursive: true, force: true });
+          cleaned++;
+        }
+      }
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+
+  for (const { repoPath } of repos) {
+    try {
+      runGitOrThrow(repoPath, ['worktree', 'prune']);
+    } catch {
+      // ignore
+    }
+  }
+
+  return cleaned;
+}

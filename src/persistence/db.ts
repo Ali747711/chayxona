@@ -733,6 +733,7 @@ export class ChayxonaDB {
       planHash: string | null;
       activeRevisionId: string | null;
       revisionCount: number;
+      maxRevisions: number;
     }>,
     now = Date.now(),
   ): TaskRecord {
@@ -747,12 +748,13 @@ export class ChayxonaDB {
         planHash: patch.planHash !== undefined ? patch.planHash : cur.planHash,
         activeRevisionId: patch.activeRevisionId !== undefined ? patch.activeRevisionId : cur.activeRevisionId,
         revisionCount: patch.revisionCount ?? cur.revisionCount,
+        maxRevisions: patch.maxRevisions ?? cur.maxRevisions,
         updatedAt: now,
       };
       this.db
         .prepare(
           `UPDATE tasks
-           SET state = ?, plan_version = ?, plan_text = ?, plan_hash = ?, active_revision_id = ?, revision_count = ?, updated_at = ?
+           SET state = ?, plan_version = ?, plan_text = ?, plan_hash = ?, active_revision_id = ?, revision_count = ?, max_revisions = ?, updated_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -762,6 +764,7 @@ export class ChayxonaDB {
           next.planHash,
           next.activeRevisionId,
           next.revisionCount,
+          next.maxRevisions,
           next.updatedAt,
           taskId,
         );
@@ -842,6 +845,16 @@ export class ChayxonaDB {
     const row = this.db
       .prepare("SELECT * FROM approvals WHERE task_id = ? AND kind = ? AND subject_hash = ? AND state = 'approved' LIMIT 1")
       .get(taskId, kind, subjectHash) as Record<string, unknown> | undefined;
+    return row ? this.mapApproval(row) : null;
+  }
+
+  findPendingApproval(taskId: string, kind?: ApprovalKind): ApprovalRecord | null {
+    const query = kind
+      ? "SELECT * FROM approvals WHERE task_id = ? AND kind = ? AND state = 'pending' ORDER BY created_at DESC LIMIT 1"
+      : "SELECT * FROM approvals WHERE task_id = ? AND state = 'pending' ORDER BY created_at DESC LIMIT 1";
+    const row = (kind
+      ? this.db.prepare(query).get(taskId, kind)
+      : this.db.prepare(query).get(taskId)) as Record<string, unknown> | undefined;
     return row ? this.mapApproval(row) : null;
   }
 
