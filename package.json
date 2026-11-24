@@ -7,7 +7,7 @@
     "node": ">=22.5.0"
   },
   "bin": {
-    "chayxona": "./bin/chayxona.mjs"
+    "chayxona": "bin/chayxona.mjs"
   },
   "files": [
     "dist",
