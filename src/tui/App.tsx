@@ -44,13 +44,14 @@ const HELP_TEXT = [
   'Commands:',
   '  /debate <topic>          Blind Round 1 -> Cross-Exam Round 2 debate',
   '  /audit [diff|staged|head] Independent read-only audit',
-  '  /task <description>      Plan -> approve -> isolated worktree write -> review -> /apply',
-  '  /approve <id> | /reject <id> <reason>  Resolve pending plan or final approval',
+  '  /task [--auto-plan] <m>  Plan -> approve -> isolated worktree write -> review -> /apply',
+  '  /approve [id]            Approve plan or final verification (defaults to active task)',
+  '  /reject [reason]         Revise plan or cancel active task and clean up worktree',
+  '  /apply [revision-id]     Apply approved worktree patch cleanly to main repository',
   '  /diff | /checks          Inspect colorized task diff or allowlisted check runs',
-  '  /apply <revision-id>     Apply approved worktree patch to original repo',
   '  /agents                  List active agents, roles, and current status',
   '  /role <agent> <lens>     Set lens (architect|security|performance|skeptic|reviewer|implementer)',
-  '  @claude|@codex|@agy <m>  Targeted single-agent turn',
+  '  @claude|@codex|@agy <m>  Targeted single-agent turn (or steer FAILED tasks)',
   '  @all <msg> or plain text Broadcast freeform turn (or R2 steering note during Blind R1)',
   '  /summary                 Deterministic local summary of findings & dissent',
   '  /findings (or Tab)       Toggle Findings & Dissent panel',
@@ -464,16 +465,33 @@ export const App: React.FC<AppProps> = ({
 
     if (cmd.kind === 'task') {
       if (!cmd.description || !taskService) {
-        setNotice({ type: 'warning', text: taskService ? 'Usage: /task <description>' : 'Task service unavailable.' });
+        setNotice({ type: 'warning', text: taskService ? 'Usage: /task [--auto-plan] <description>' : 'Task service unavailable.' });
         return;
       }
       void taskService
-        .startTask(cmd.description)
-        .then(({ task, approval }) => {
-          pushSystemItem(
-            `Plan v${task.planVersion} (${approval.id}):\n${task.planText ?? ''}\n\nRun /approve ${approval.id} or /reject ${approval.id} <reason>`,
-            `TASK ${task.id}`,
-          );
+        .startTask(cmd.description, { autoPlan: cmd.autoPlan })
+        .then((res) => {
+          if (res.revision?.diffPatch) {
+            pushSystemItem(res.revision.diffPatch.slice(0, 6000), `DIFF ${res.revision.id}`, true);
+          }
+          if (res.task.state === 'AWAITING_FINAL_APPROVAL' || res.task.state === 'READY_TO_APPLY') {
+            pushSystemItem(
+              `Task ${res.task.id} verified and ready! Run /apply to merge to main repo or /reject to discard.`,
+              `TASK ${res.task.id}`,
+            );
+          } else if (res.task.state === 'AWAITING_PLAN_APPROVAL') {
+            pushSystemItem(
+              `Plan v${res.task.planVersion} (${res.approval.id}):\n${res.task.planText ?? ''}\n\nRun /approve to start implementation or /reject <reason> to revise.`,
+              `TASK ${res.task.id}`,
+            );
+          } else if (res.task.state === 'FAILED') {
+            pushSystemItem(
+              `Task ${res.task.id} failed verification/reviews. Run @${res.task.implementer} <instruction> to steer or /reject to cancel.`,
+              `TASK ${res.task.id}`,
+            );
+          } else {
+            pushSystemItem(`Task ${res.task.id} state: ${res.task.state}`, `TASK ${res.task.id}`);
+          }
         })
         .catch((err: unknown) => {
           pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
@@ -482,8 +500,8 @@ export const App: React.FC<AppProps> = ({
     }
 
     if (cmd.kind === 'approve') {
-      if (!cmd.id || !taskService) {
-        setNotice({ type: 'warning', text: 'Usage: /approve <approval-id>' });
+      if (!taskService) {
+        setNotice({ type: 'warning', text: 'Task service unavailable.' });
         return;
       }
       void taskService
@@ -492,10 +510,22 @@ export const App: React.FC<AppProps> = ({
           if (res.revision?.diffPatch) {
             pushSystemItem(res.revision.diffPatch.slice(0, 6000), `DIFF ${res.revision.id}`, true);
           }
-          pushSystemItem(
-            `Task ${res.task.id} -> ${res.task.state}${res.revision ? ` (rev ${res.revision.id})` : ''}${res.finalApproval ? `\nRun /approve ${res.finalApproval.id} to unlock /apply.` : ''}`,
-            'TASK',
-          );
+          if (res.task.state === 'AWAITING_FINAL_APPROVAL' || res.task.state === 'READY_TO_APPLY') {
+            pushSystemItem(
+              `Task ${res.task.id} verified and ready! Run /apply to merge to main repo or /reject to discard.`,
+              `TASK ${res.task.id}`,
+            );
+          } else if (res.task.state === 'FAILED') {
+            pushSystemItem(
+              `Task ${res.task.id} failed verification/reviews. Run @${res.task.implementer} <instruction> to steer or /reject to cancel.`,
+              `TASK ${res.task.id}`,
+            );
+          } else {
+            pushSystemItem(
+              `Task ${res.task.id} -> ${res.task.state}${res.revision ? ` (rev ${res.revision.id})` : ''}`,
+              'TASK',
+            );
+          }
         })
         .catch((err: unknown) => {
           pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
@@ -504,17 +534,21 @@ export const App: React.FC<AppProps> = ({
     }
 
     if (cmd.kind === 'reject') {
-      if (!cmd.id || !taskService) {
-        setNotice({ type: 'warning', text: 'Usage: /reject <approval-id> <reason>' });
+      if (!taskService) {
+        setNotice({ type: 'warning', text: 'Task service unavailable.' });
         return;
       }
       void taskService
-        .rejectApproval(cmd.id, cmd.reason)
-        .then(({ task, nextApproval }) => {
-          pushSystemItem(
-            `Revised Plan v${task.planVersion} (${nextApproval.id}):\n${task.planText ?? ''}`,
-            `TASK ${task.id}`,
-          );
+        .reject(cmd.reason)
+        .then((res) => {
+          if (res.nextApproval) {
+            pushSystemItem(
+              `Revised Plan v${res.task.planVersion} (${res.nextApproval.id}):\n${res.task.planText ?? ''}\n\nRun /approve to continue or /reject <reason>.`,
+              `TASK ${res.task.id}`,
+            );
+          } else {
+            pushSystemItem(`Task ${res.task.id} CANCELLED. Worktree cleaned up.`, 'TASK');
+          }
         })
         .catch((err: unknown) => {
           pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
@@ -523,13 +557,13 @@ export const App: React.FC<AppProps> = ({
     }
 
     if (cmd.kind === 'apply') {
-      if (!cmd.revisionId || !taskService) {
-        setNotice({ type: 'warning', text: 'Usage: /apply <revision-id>' });
+      if (!taskService) {
+        setNotice({ type: 'warning', text: 'Task service unavailable.' });
         return;
       }
       try {
         const done = taskService.applyRevision(cmd.revisionId);
-        pushSystemItem(`Applied ${cmd.revisionId} cleanly. Task ${done.id} is COMPLETED.`, 'APPLY');
+        pushSystemItem(`Applied patch cleanly to original repository. Task ${done.id} is COMPLETED.`, 'APPLY');
       } catch (err: unknown) {
         pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
       }
@@ -555,6 +589,31 @@ export const App: React.FC<AppProps> = ({
     }
 
     if (cmd.kind === 'mention') {
+      const latestTask = taskService?.getLatestTask();
+      if (taskService && latestTask && latestTask.state === 'FAILED' && (cmd.target === latestTask.implementer || cmd.target === 'all')) {
+        void taskService
+          .steer(cmd.body)
+          .then((res) => {
+            if (res.revision?.diffPatch) {
+              pushSystemItem(res.revision.diffPatch.slice(0, 6000), `DIFF ${res.revision.id}`, true);
+            }
+            if (res.task.state === 'AWAITING_FINAL_APPROVAL' || res.task.state === 'READY_TO_APPLY') {
+              pushSystemItem(
+                `Task ${res.task.id} resumed and verified! Run /apply to merge to main repo or /reject to discard.`,
+                `TASK ${res.task.id}`,
+              );
+            } else if (res.task.state === 'FAILED') {
+              pushSystemItem(
+                `Task ${res.task.id} still failing checks/reviews. Run @${res.task.implementer} <msg> to steer or /reject to cancel.`,
+                `TASK ${res.task.id}`,
+              );
+            }
+          })
+          .catch((err: unknown) => {
+            pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
+          });
+        return;
+      }
       const recipients: AgentId[] = cmd.target === 'all' ? [...service.room.agents] : [cmd.target];
       void service.runFreeform(recipients, cmd.body).catch((err: unknown) => {
         pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
@@ -568,6 +627,8 @@ export const App: React.FC<AppProps> = ({
   };
 
   const budget = service.getBudgetStatus();
+  const activeTask = taskService?.getLatestTask();
+  const hasActiveTask = Boolean(activeTask && activeTask.state !== 'COMPLETED' && activeTask.state !== 'CANCELLED');
   const isBlind = round?.phase === 'blind_r1';
   const phaseLabel = round ? round.phase.toUpperCase() : 'IDLE';
   const frameBorderColor = isBlind ? theme.borderBlind : service.isRunning() ? theme.borderActive : theme.border;
@@ -575,7 +636,15 @@ export const App: React.FC<AppProps> = ({
     notice?.type === 'error' ? theme.error : notice?.type === 'warning' ? theme.warning : theme.muted;
 
   // Build flattened visual lines for clean full-viewport scrolling above the fixed bottom prompt dock
-  const dockReserveRows = showFindings ? (isShort ? 11 : 14) : isBlind ? 8 : suggestions.length > 0 ? 7 : 6;
+  const dockReserveRows = showFindings
+    ? (isShort ? 11 : 14)
+    : isBlind
+      ? 8
+      : hasActiveTask
+        ? 9
+        : suggestions.length > 0
+          ? 7
+          : 6;
   const viewportRows = Math.max(4, rows - dockReserveRows);
 
   type ViewportRow =
@@ -682,6 +751,9 @@ export const App: React.FC<AppProps> = ({
             <Text wrap="truncate-end">
               <Text bold color={theme.brand}>CHAYXONA</Text>
               <Text bold color={theme.readOnlyBadge}> [RO]</Text>
+              {hasActiveTask ? (
+                <Text bold color="yellow"> [TASK:{activeTask?.state}]</Text>
+              ) : null}
             </Text>
           ) : (
             <Text wrap="truncate-end">
@@ -690,6 +762,9 @@ export const App: React.FC<AppProps> = ({
               <Text bold>{path.basename(service.room.repoPath)}</Text>
               <Text color={theme.muted}> ({service.room.id}) </Text>
               <Text bold color={theme.readOnlyBadge}>[READ-ONLY]</Text>
+              {hasActiveTask ? (
+                <Text bold color="yellow"> [TASK: {activeTask?.state}]</Text>
+              ) : null}
             </Text>
           )}
           <Text wrap="truncate-end">
@@ -723,6 +798,23 @@ export const App: React.FC<AppProps> = ({
             );
           })}
         </Box>
+
+        {hasActiveTask && !showFindings && !isBlind && activeTask ? (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold color="yellow" wrap="truncate-end">
+              TASK {activeTask.id} [{activeTask.state} rev {activeTask.revisionCount}/{activeTask.maxRevisions}]: {activeTask.description.slice(0, 50)}
+            </Text>
+            <Text color={theme.muted} wrap="truncate-end">
+              {activeTask.state === 'AWAITING_PLAN_APPROVAL' && 'Plan ready: run /approve to implement or /reject <reason> to revise'}
+              {activeTask.state === 'IMPLEMENTING' && `Implementer @${activeTask.implementer} writing code in isolated worktree...`}
+              {activeTask.state === 'VERIFYING' && 'Running allowlisted verification checks...'}
+              {activeTask.state === 'REVIEWING' && 'Peer reviewer agents inspecting git diff...'}
+              {activeTask.state === 'AWAITING_FINAL_APPROVAL' && 'Task verified! Run /apply to merge or /reject to discard'}
+              {activeTask.state === 'READY_TO_APPLY' && 'Ready to apply! Run /apply to merge or /reject to discard'}
+              {activeTask.state === 'FAILED' && `Task failed checks/reviews. Run @${activeTask.implementer} <msg> to steer or /reject to cancel`}
+            </Text>
+          </Box>
+        ) : null}
 
         {isBlind && !showFindings ? (
           <Box flexDirection="column" marginTop={1}>

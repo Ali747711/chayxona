@@ -19,10 +19,10 @@ export type ParsedCommand =
   | { kind: 'stop'; target: AgentId | 'all' }
   | { kind: 'budget'; delta: number }
   | { kind: 'export'; format: 'md' | 'jsonl' | 'pr'; targetPath?: string }
-  | { kind: 'task'; description: string }
-  | { kind: 'approve'; id: string }
-  | { kind: 'reject'; id: string; reason: string }
-  | { kind: 'apply'; revisionId: string }
+  | { kind: 'task'; description: string; autoPlan?: boolean }
+  | { kind: 'approve'; id?: string }
+  | { kind: 'reject'; reason?: string }
+  | { kind: 'apply'; revisionId?: string }
   | { kind: 'debate'; topic: string }
   | { kind: 'audit'; mode?: AuditMode; focus: string }
   | { kind: 'unknown_slash'; command: string }
@@ -88,21 +88,25 @@ export function parseUserInput(raw: string): ParsedCommand {
   }
 
   if (trimmed === '/task' || trimmed.startsWith('/task ')) {
-    return { kind: 'task', description: trimmed.slice(5).trim() };
+    const rawDesc = trimmed.slice(5).trim();
+    const autoPlan = rawDesc.startsWith('--auto-plan');
+    const description = autoPlan ? rawDesc.slice(11).trim() : rawDesc;
+    return { kind: 'task', description, autoPlan };
   }
 
   if (trimmed === '/approve' || trimmed.startsWith('/approve ')) {
-    return { kind: 'approve', id: trimmed.slice(8).trim() };
+    const id = trimmed.slice(8).trim() || undefined;
+    return { kind: 'approve', id };
   }
 
   if (trimmed === '/reject' || trimmed.startsWith('/reject ')) {
-    const rest = trimmed.slice(7).trim();
-    const [id, ...reasonParts] = rest ? rest.split(/\s+/) : [];
-    return { kind: 'reject', id: id ?? '', reason: reasonParts.join(' ') || 'Rejected by owner' };
+    const reason = trimmed.slice(7).trim() || undefined;
+    return { kind: 'reject', reason };
   }
 
   if (trimmed === '/apply' || trimmed.startsWith('/apply ')) {
-    return { kind: 'apply', revisionId: trimmed.slice(6).trim() };
+    const revisionId = trimmed.slice(6).trim() || undefined;
+    return { kind: 'apply', revisionId };
   }
 
   if (trimmed === '/debate' || trimmed.startsWith('/debate ')) {
@@ -139,11 +143,11 @@ export const SLASH_COMMANDS: readonly { cmd: string; takesArg: boolean }[] = [
   { cmd: '/debate', takesArg: true },
   { cmd: '/audit', takesArg: true },
   { cmd: '/task', takesArg: true },
-  { cmd: '/approve', takesArg: true },
-  { cmd: '/reject', takesArg: true },
+  { cmd: '/approve', takesArg: false },
+  { cmd: '/reject', takesArg: false },
   { cmd: '/diff', takesArg: false },
   { cmd: '/checks', takesArg: false },
-  { cmd: '/apply', takesArg: true },
+  { cmd: '/apply', takesArg: false },
   { cmd: '/agents', takesArg: false },
   { cmd: '/role', takesArg: true },
   { cmd: '/summary', takesArg: false },

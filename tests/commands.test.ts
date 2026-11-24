@@ -20,6 +20,22 @@ describe('TUI command parser', () => {
       mode: 'staged',
       focus: 'focus on auth',
     });
+    expect(parseUserInput('/task Fix race condition in ledger')).toEqual({
+      kind: 'task',
+      description: 'Fix race condition in ledger',
+      autoPlan: false,
+    });
+    expect(parseUserInput('/task --auto-plan Fix race condition in ledger')).toEqual({
+      kind: 'task',
+      description: 'Fix race condition in ledger',
+      autoPlan: true,
+    });
+    expect(parseUserInput('/approve')).toEqual({ kind: 'approve', id: undefined });
+    expect(parseUserInput('/approve plan-123')).toEqual({ kind: 'approve', id: 'plan-123' });
+    expect(parseUserInput('/apply')).toEqual({ kind: 'apply', revisionId: undefined });
+    expect(parseUserInput('/apply rev-456')).toEqual({ kind: 'apply', revisionId: 'rev-456' });
+    expect(parseUserInput('/reject')).toEqual({ kind: 'reject', reason: undefined });
+    expect(parseUserInput('/reject Needs tests')).toEqual({ kind: 'reject', reason: 'Needs tests' });
     expect(parseUserInput('hello everyone')).toEqual({ kind: 'plain', body: 'hello everyone' });
   });
 
