@@ -43,6 +43,17 @@ export function isPathInside(childPath: string, parentPath: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+export function openDatabase(repoPath: string, allowInRepo = false): { db: ChayxonaDB; dataDir: string } {
+  const dataDir = resolveDataDir();
+  if (!allowInRepo && isPathInside(dataDir, repoPath)) {
+    throw new Error(
+      `CHAYXONA_DATA_DIR (${dataDir}) is inside target repository (${repoPath}). Set an out-of-repo path or pass --allow-in-repo.`,
+    );
+  }
+  const dbPath = path.join(dataDir, 'chayxona.db');
+  return { db: new ChayxonaDB(dbPath), dataDir };
+}
+
 const SCHEMA_V1_SQL = `
 CREATE TABLE IF NOT EXISTS rooms (
   id TEXT PRIMARY KEY,

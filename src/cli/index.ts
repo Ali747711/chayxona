@@ -5,20 +5,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import React from 'react';
 import { render } from 'ink';
-import { AgyAdapter } from '../adapters/agy.js';
-import { ClaudeAdapter } from '../adapters/claude.js';
-import { CodexAdapter } from '../adapters/codex.js';
+import { createAdapters } from '../adapters/factory.js';
 import type { AgentAdapter } from '../adapters/contract.js';
-import { FakeAgentAdapter } from '../adapters/fake.js';
 import { loadProjectConfig, writeDefaultConfig, writeDefaultWorkflow } from '../config/config.js';
 import { ALL_AGENTS, type AgentId, type RoomRecord } from '../domain/types.js';
 import { inspectRepo, type AuditMode } from '../orchestrator/git-inspector.js';
 import { RoomService } from '../orchestrator/room-service.js';
 import { TaskService } from '../orchestrator/task-service.js';
-import { ChayxonaDB, isPathInside, resolveDataDir } from '../persistence/db.js';
+import { ChayxonaDB, isPathInside, openDatabase, resolveDataDir } from '../persistence/db.js';
 import { RoomLock } from '../persistence/room-lock.js';
 import { SecretRedactor } from '../security/redactor.js';
 import { App } from '../tui/App.js';
+import { createMcpServer } from '../mcp/server.js';
 import { formatDoctorReport, runDoctor } from './doctor.js';
 import { runNoTuiCommand } from './no-tui.js';
 import {
@@ -56,32 +54,6 @@ function parseTimeoutMs(raw?: string): number {
   if (unit === 'ms') return n;
   if (unit === 'm') return n * 60_000;
   return n * 1000;
-}
-
-function createAdapters(redactor: SecretRedactor, useFake = false): Map<AgentId, AgentAdapter> {
-  if (useFake) {
-    return new Map<AgentId, AgentAdapter>([
-      ['claude', new FakeAgentAdapter('claude')],
-      ['codex', new FakeAgentAdapter('codex')],
-      ['agy', new FakeAgentAdapter('agy')],
-    ]);
-  }
-  return new Map<AgentId, AgentAdapter>([
-    ['claude', new ClaudeAdapter('claude', redactor)],
-    ['codex', new CodexAdapter('codex', redactor)],
-    ['agy', new AgyAdapter('agy', redactor)],
-  ]);
-}
-
-function openDatabase(repoPath: string, allowInRepo = false): { db: ChayxonaDB; dataDir: string } {
-  const dataDir = resolveDataDir();
-  if (!allowInRepo && isPathInside(dataDir, repoPath)) {
-    throw new Error(
-      `CHAYXONA_DATA_DIR (${dataDir}) is inside target repository (${repoPath}). Set an out-of-repo path or pass --allow-in-repo.`,
-    );
-  }
-  const dbPath = path.join(dataDir, 'chayxona.db');
-  return { db: new ChayxonaDB(dbPath), dataDir };
 }
 
 async function resolveReadyAdapters(
@@ -490,6 +462,15 @@ program
     } finally {
       db.close();
     }
+  });
+
+program
+  .command('mcp')
+  .description('Run Chayxona as a local Model Context Protocol (MCP) server over stdio')
+  .option('--fake', 'Use deterministic fake providers (0 LLM cost)', false)
+  .action((opts: { fake?: boolean }) => {
+    const server = createMcpServer({ fake: Boolean(opts.fake) });
+    server.start();
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
