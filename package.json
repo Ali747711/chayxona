@@ -1,6 +1,6 @@
 {
   "name": "chayxona",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Local-first terminal collaboration room where Claude Code, Codex, and Google Antigravity CLIs debate and cross-review code live.",
   "type": "module",
   "engines": {
