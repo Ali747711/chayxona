@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentAdapter } from '../adapters/contract.js';
 import { checkTurnBudget, type BudgetCheckResult } from '../domain/budget.js';
 import { groupFindings, parseFindingsFromReply } from '../domain/findings.js';
+import { DEFAULT_AGENT_ROLES, type AgentRole } from '../domain/roles.js';
 import type {
   AdapterErrorCode,
   AgentEvent,
@@ -67,6 +68,9 @@ export type RecoveryState =
 
 export class RoomService extends EventEmitter {
   private readonly activeControllers = new Map<AgentId, AbortController>();
+  private readonly roles = new Map<AgentId, AgentRole>(
+    Object.entries(DEFAULT_AGENT_ROLES) as Array<[AgentId, AgentRole]>,
+  );
   private activeRound: RoundRecord | null = null;
   private paused = false;
   private batchHalted = false;
@@ -84,6 +88,15 @@ export class RoomService extends EventEmitter {
 
   getActiveRound(): RoundRecord | null {
     return this.activeRound;
+  }
+
+  getRole(agentId: AgentId): AgentRole {
+    return this.roles.get(agentId) ?? DEFAULT_AGENT_ROLES[agentId];
+  }
+
+  setRole(agentId: AgentId, role: AgentRole): void {
+    this.roles.set(agentId, role);
+    this.emitNotice('status', `Assigned role "${role}" to ${agentId}.`);
   }
 
   /**
@@ -437,6 +450,7 @@ export class RoomService extends EventEmitter {
       (agentId) =>
         buildBlindR1Prompt({
           agentId,
+          role: this.getRole(agentId),
           kind,
           topic,
           audit: auditPayload,
@@ -559,6 +573,7 @@ export class RoomService extends EventEmitter {
       (agentId) =>
         buildCrossExamR2Prompt({
           agentId,
+          role: this.getRole(agentId),
           roundId,
           topic,
           r1Messages,

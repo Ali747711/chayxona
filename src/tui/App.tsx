@@ -47,7 +47,8 @@ const HELP_TEXT = [
   '  /approve <id> | /reject <id> <reason>  Resolve pending plan or final approval',
   '  /diff | /checks          Inspect colorized task diff or allowlisted check runs',
   '  /apply <revision-id>     Apply approved worktree patch to original repo',
-  '  /agents                  List active agents and their current status',
+  '  /agents                  List active agents, roles, and current status',
+  '  /role <agent> <lens>     Set lens (architect|security|performance|skeptic|reviewer|implementer)',
   '  @claude|@codex|@agy <m>  Targeted single-agent turn',
   '  @all <msg> or plain text Broadcast freeform turn (or R2 steering note during Blind R1)',
   '  /summary                 Deterministic local summary of findings & dissent',
@@ -333,12 +334,20 @@ export const App: React.FC<AppProps> = ({
     if (cmd.kind === 'agents') {
       const lines = service.room.agents.map((a) => {
         const st = agentStates[a] ?? { status: 'idle', detail: '' };
-        return `  - @${a} (${st.detail || st.status})`;
+        return `  - @${a} [role: ${service.getRole(a)}] (${st.detail || st.status})`;
       });
       pushSystemItem(
-        `Active agents in room ${service.room.id}:\n${lines.join('\n')}\nUse @claude <msg>, @codex <msg>, @agy <msg>, or @all <msg>.`,
+        `Active agents in room ${service.room.id}:\n${lines.join('\n')}\nUse \`/role <agent> <lens>\` to switch lenses, or \`@claude|@codex|@agy <msg>\`.`,
         'AGENTS',
       );
+      return;
+    }
+    if (cmd.kind === 'role') {
+      if (cmd.invalid || !cmd.agent || !cmd.role) {
+        setNotice({ type: 'warning', text: cmd.invalid ?? 'Usage: /role <agent> <role>' });
+        return;
+      }
+      service.setRole(cmd.agent, cmd.role);
       return;
     }
     if (cmd.kind === 'findings') {

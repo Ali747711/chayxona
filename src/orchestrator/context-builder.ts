@@ -1,3 +1,4 @@
+import { ROLE_GUIDANCE, type AgentRole } from '../domain/roles.js';
 import type { AgentId, FindingRecord, MessageRecord } from '../domain/types.js';
 import type { AuditPayload } from './git-inspector.js';
 
@@ -30,6 +31,7 @@ At the end of your response, optionally include a fenced \`chayxona-findings\` J
 
 export function buildBlindR1Prompt(opts: {
   agentId: AgentId;
+  role?: AgentRole;
   kind: 'debate' | 'audit';
   topic: string;
   audit?: AuditPayload;
@@ -37,6 +39,7 @@ export function buildBlindR1Prompt(opts: {
 }): string {
   const lines: string[] = [
     `You are ${opts.agentId.toUpperCase()} participating in a READ-ONLY Chayxona engineering room.`,
+    ...(opts.role ? [`Role lens: ${opts.role.toUpperCase()} — ${ROLE_GUIDANCE[opts.role]}`] : []),
     'You are in BLIND ROUND 1: inspect the repository independently. Do NOT assume what other agents think.',
     'Do NOT attempt to modify files or run mutating commands.',
   ];
@@ -76,6 +79,7 @@ export function buildBlindR1Prompt(opts: {
 
 export function buildCrossExamR2Prompt(opts: {
   agentId: AgentId;
+  role?: AgentRole;
   roundId: number;
   topic: string;
   r1Messages: readonly MessageRecord[];
@@ -84,6 +88,7 @@ export function buildCrossExamR2Prompt(opts: {
 }): string {
   const lines: string[] = [
     `You are ${opts.agentId.toUpperCase()} in CROSS-EXAMINATION ROUND 2 of a READ-ONLY Chayxona room.`,
+    ...(opts.role ? [`Role lens: ${opts.role.toUpperCase()} — ${ROLE_GUIDANCE[opts.role]}`] : []),
     `Topic: ${opts.topic}`,
     'Below are all independent Round 1 takes from the room. Challenge weak assumptions, point out blind spots, and explicitly cite Round 1 finding IDs in agrees_with / dissents_from.',
     '\n## Revealed Round 1 Takes',

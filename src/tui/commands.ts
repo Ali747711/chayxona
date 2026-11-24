@@ -1,3 +1,4 @@
+import { isAgentRole, type AgentRole } from '../domain/roles.js';
 import type { AgentId } from '../domain/types.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
 
@@ -6,6 +7,7 @@ export type ParsedCommand =
   | { kind: 'quit' }
   | { kind: 'help' }
   | { kind: 'agents' }
+  | { kind: 'role'; agent?: AgentId; role?: AgentRole; invalid?: string }
   | { kind: 'findings' }
   | { kind: 'summary' }
   | { kind: 'diff' }
@@ -34,6 +36,25 @@ export function parseUserInput(raw: string): ParsedCommand {
   if (trimmed === '/quit' || trimmed === '/exit') return { kind: 'quit' };
   if (trimmed === '/help') return { kind: 'help' };
   if (trimmed === '/agents' || trimmed === '/agent') return { kind: 'agents' };
+  if (trimmed === '/role' || trimmed.startsWith('/role ')) {
+    const parts = trimmed.slice(5).trim().split(/\s+/).filter(Boolean);
+    const [agentRaw, roleRaw] = parts;
+    if (!agentRaw || !roleRaw) {
+      return { kind: 'role', invalid: 'Usage: /role <claude|codex|agy> <architect|security|performance|skeptic|reviewer|implementer>' };
+    }
+    const agent = agentRaw.toLowerCase();
+    const role = roleRaw.toLowerCase();
+    if (agent !== 'claude' && agent !== 'codex' && agent !== 'agy') {
+      return { kind: 'role', invalid: `Unknown agent "${agentRaw}". Use claude, codex, or agy.` };
+    }
+    if (!isAgentRole(role)) {
+      return {
+        kind: 'role',
+        invalid: `Unknown role "${roleRaw}". Use: architect, security, performance, skeptic, reviewer, implementer.`,
+      };
+    }
+    return { kind: 'role', agent, role };
+  }
   if (trimmed === '/findings') return { kind: 'findings' };
   if (trimmed === '/summary') return { kind: 'summary' };
   if (trimmed === '/diff') return { kind: 'diff' };
@@ -124,6 +145,7 @@ export const SLASH_COMMANDS: readonly { cmd: string; takesArg: boolean }[] = [
   { cmd: '/checks', takesArg: false },
   { cmd: '/apply', takesArg: true },
   { cmd: '/agents', takesArg: false },
+  { cmd: '/role', takesArg: true },
   { cmd: '/summary', takesArg: false },
   { cmd: '/findings', takesArg: false },
   { cmd: '/unseal', takesArg: false },
