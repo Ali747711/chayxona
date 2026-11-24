@@ -35,6 +35,8 @@ describe('TUI command parser', () => {
     expect(parseUserInput('/diff')).toEqual({ kind: 'diff', file: undefined });
     expect(parseUserInput('/diff 1')).toEqual({ kind: 'diff', file: '1' });
     expect(parseUserInput('/diff src/index.ts')).toEqual({ kind: 'diff', file: 'src/index.ts' });
+    expect(parseUserInput('/warm')).toEqual({ kind: 'warm', action: 'status' });
+    expect(parseUserInput('/warm clear')).toEqual({ kind: 'warm', action: 'clear' });
     expect(parseUserInput('/apply')).toEqual({ kind: 'apply', revisionId: undefined });
     expect(parseUserInput('/apply rev-456')).toEqual({ kind: 'apply', revisionId: 'rev-456' });
     expect(parseUserInput('/reject')).toEqual({ kind: 'reject', reason: undefined });

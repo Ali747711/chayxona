@@ -51,6 +51,7 @@ const HELP_TEXT = [
   '  /reject [reason]         Revise plan or cancel active task and clean up worktree',
   '  /apply [revision-id]     Apply approved worktree patch cleanly to main repository',
   '  /diff [file|number]      Interactive diff browser (overview or file hunks)',
+  '  /warm [clear]            Inspect or clear active warm provider sessions',
   '  /checks                  Inspect allowlisted check runs for active task',
   '  /agents                  List active agents, roles, and current status',
   '  /role <agent> <lens>     Set lens (architect|security|performance|skeptic|reviewer|implementer)',
@@ -400,6 +401,28 @@ export const App: React.FC<AppProps> = ({
         const preview = `${overview}\n\n---\nShowing file 1 (${parsed.files[0].file}):\n${parsed.files[0].raw.slice(0, 4000)}`;
         pushSystemItem(preview, `DIFF (${sourceLabel})`, true);
       }
+      return;
+    }
+    if (cmd.kind === 'warm') {
+      if (cmd.action === 'clear') {
+        service.clearWarmSessions();
+        setNotice({ type: 'status', text: 'Warm agent sessions cleared.' });
+        return;
+      }
+      const sessions = service.getWarmSessions();
+      if (sessions.length === 0) {
+        pushSystemItem(
+          'No warm provider sessions active yet. Run a debate or task turn to warm sessions.',
+          'WARM',
+        );
+        return;
+      }
+      const lines = ['Warm Provider Sessions (Persistent Transports):'];
+      for (const s of sessions) {
+        lines.push(`  - [${s.agentId.toUpperCase()}]: session=${s.sessionId} (turns=${s.turnCount})`);
+      }
+      lines.push('\nRun `/warm clear` to reset all warm sessions.');
+      pushSystemItem(lines.join('\n'), 'WARM');
       return;
     }
     if (cmd.kind === 'checks') {

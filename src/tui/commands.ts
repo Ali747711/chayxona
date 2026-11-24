@@ -11,6 +11,7 @@ export type ParsedCommand =
   | { kind: 'findings' }
   | { kind: 'summary' }
   | { kind: 'diff'; file?: string }
+  | { kind: 'warm'; action?: 'status' | 'clear' }
   | { kind: 'checks' }
   | { kind: 'pause' }
   | { kind: 'continue' }
@@ -60,6 +61,11 @@ export function parseUserInput(raw: string): ParsedCommand {
   if (trimmed === '/diff' || trimmed.startsWith('/diff ')) {
     const file = trimmed.slice(5).trim();
     return { kind: 'diff', file: file.length > 0 ? file : undefined };
+  }
+  if (trimmed === '/warm' || trimmed.startsWith('/warm ')) {
+    const sub = trimmed.slice(5).trim().toLowerCase();
+    if (sub === 'clear') return { kind: 'warm', action: 'clear' };
+    return { kind: 'warm', action: 'status' };
   }
   if (trimmed === '/checks') return { kind: 'checks' };
   if (trimmed === '/pause') return { kind: 'pause' };
@@ -149,6 +155,7 @@ export const SLASH_COMMANDS: readonly { cmd: string; takesArg: boolean }[] = [
   { cmd: '/approve', takesArg: false },
   { cmd: '/reject', takesArg: false },
   { cmd: '/diff', takesArg: true },
+  { cmd: '/warm', takesArg: true },
   { cmd: '/checks', takesArg: false },
   { cmd: '/apply', takesArg: false },
   { cmd: '/agents', takesArg: false },

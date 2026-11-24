@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { AgentAdapter } from '../adapters/contract.js';
+import { WarmTransportPool, type WarmSessionInfo } from '../adapters/warm-transport.js';
 import { checkTurnBudget, type BudgetCheckResult } from '../domain/budget.js';
 import { groupFindings, parseFindingsFromReply } from '../domain/findings.js';
 import { DEFAULT_AGENT_ROLES, type AgentRole } from '../domain/roles.js';
@@ -77,6 +78,8 @@ export class RoomService extends EventEmitter {
   private inFlight = false;
   private pendingR2Context: { roundId: number; topic: string; participants: AgentId[] } | null = null;
 
+  public readonly warmPool = new WarmTransportPool();
+
   constructor(
     public readonly room: RoomRecord,
     private readonly db: ChayxonaDB,
@@ -84,6 +87,15 @@ export class RoomService extends EventEmitter {
     private readonly redactor: SecretRedactor,
   ) {
     super();
+  }
+
+  getWarmSessions(): WarmSessionInfo[] {
+    return this.warmPool.list(this.room.id);
+  }
+
+  clearWarmSessions(): void {
+    this.warmPool.clear(this.room.id);
+    this.emitNotice('status', 'Cleared warm agent session pool.');
   }
 
   getActiveRound(): RoundRecord | null {
@@ -866,6 +878,11 @@ export class RoomService extends EventEmitter {
     let failedCode: AdapterErrorCode | null = null;
     let cancelled = false;
 
+    const warmSession = this.warmPool.get(this.room.id, agentId) ?? this.db.getProviderSession(this.room.id, agentId);
+    const resumeSessionId = warmSession
+      ? ('sessionId' in warmSession ? warmSession.sessionId : warmSession.externalSessionId)
+      : undefined;
+
     try {
       for await (const rawEv of adapter.run(
         {
@@ -876,6 +893,8 @@ export class RoomService extends EventEmitter {
           cwd: this.room.repoPath,
           prompt,
           timeoutMs: this.room.turnTimeoutMs,
+          resumeSessionId,
+          warm: true,
         },
         controller.signal,
       )) {
@@ -889,6 +908,7 @@ export class RoomService extends EventEmitter {
         }
 
         if (rawEv.type === 'session.bound') {
+          this.warmPool.register(this.room.id, agentId, rawEv.externalSessionId);
           this.db.upsertProviderSession(this.room.id, agentId, rawEv.externalSessionId);
           this.emit('agentEvent', rawEv);
           continue;

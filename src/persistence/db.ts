@@ -682,6 +682,14 @@ export class ChayxonaDB {
     });
   }
 
+  getProviderSession(roomId: string, agentId: AgentId): { externalSessionId: string; status: string } | null {
+    const row = this.db
+      .prepare('SELECT external_session_id, status FROM provider_sessions WHERE room_id = ? AND agent_id = ?')
+      .get(roomId, agentId) as { external_session_id: string; status: string } | undefined;
+    if (!row) return null;
+    return { externalSessionId: String(row.external_session_id), status: String(row.status) };
+  }
+
   // --- v2 Tasks, Approvals, Revisions, Checks & Writer Leases ---
 
   createTask(task: TaskRecord): void {

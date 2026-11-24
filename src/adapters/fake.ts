@@ -89,8 +89,9 @@ export class FakeAgentAdapter implements AgentAdapter {
     yield { ...base, type: 'turn.started', ts: Date.now() };
     const script = this.handler(input);
 
-    if (script.sessionId) {
-      yield { ...base, type: 'session.bound', externalSessionId: script.sessionId, ts: Date.now() };
+    const sessionId = input.resumeSessionId ?? script.sessionId;
+    if (sessionId) {
+      yield { ...base, type: 'session.bound', externalSessionId: sessionId, ts: Date.now() };
     }
 
     if (script.hangUntilAbort) {

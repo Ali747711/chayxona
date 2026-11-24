@@ -143,7 +143,11 @@ export class CodexAdapter implements AgentAdapter {
       }
     };
 
-    const args = input.permissions === 'workspace-write' ? [...CODEX_WRITE_ARGS] : [...CODEX_READONLY_ARGS];
+    const args: string[] =
+      input.permissions === 'workspace-write' ? [...CODEX_WRITE_ARGS] : [...CODEX_READONLY_ARGS];
+    if (input.resumeSessionId) {
+      args.push('resume', input.resumeSessionId);
+    }
     const runPromise = runSubprocessLines({
       command: this.command,
       args,

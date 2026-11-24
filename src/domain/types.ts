@@ -53,6 +53,8 @@ export interface TurnInput {
   prompt: string;
   timeoutMs: number;
   permissions?: TurnPermissions;
+  resumeSessionId?: string;
+  warm?: boolean;
 }
 
 export type AgentEvent =

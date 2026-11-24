@@ -153,7 +153,11 @@ export class ClaudeAdapter implements AgentAdapter {
       }
     };
 
-    const args = input.permissions === 'workspace-write' ? [...CLAUDE_WRITE_ARGS] : [...CLAUDE_READONLY_ARGS];
+    const args: string[] =
+      input.permissions === 'workspace-write' ? [...CLAUDE_WRITE_ARGS] : [...CLAUDE_READONLY_ARGS];
+    if (input.resumeSessionId) {
+      args.push('--resume', input.resumeSessionId);
+    }
     const runPromise = runSubprocessLines({
       command: this.command,
       args,

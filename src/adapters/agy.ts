@@ -22,8 +22,12 @@ export function buildAgyArgs(
   prompt: string,
   timeoutMs: number,
   permissions: 'read-only' | 'workspace-write' = 'read-only',
+  resumeSessionId?: string,
 ): string[] {
   const base = buildAgyReadOnlyArgs(prompt, timeoutMs);
+  if (resumeSessionId) {
+    base.push('--resume', resumeSessionId);
+  }
   if (permissions === 'workspace-write') {
     return ['--mode', 'accept-edits', ...base];
   }
@@ -161,7 +165,7 @@ export class AgyAdapter implements AgentAdapter {
 
     const runPromise = runSubprocessLines({
       command: this.command,
-      args: buildAgyArgs(boundedPrompt, input.timeoutMs, input.permissions ?? 'read-only'),
+      args: buildAgyArgs(boundedPrompt, input.timeoutMs, input.permissions ?? 'read-only', input.resumeSessionId),
       cwd: input.cwd,
       timeoutMs: input.timeoutMs,
       signal,
