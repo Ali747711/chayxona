@@ -42,6 +42,8 @@ export interface ProviderCapabilities {
   error?: string;
 }
 
+export type TurnPermissions = 'read-only' | 'workspace-write';
+
 export interface TurnInput {
   roomId: string;
   roundId: number;
@@ -50,6 +52,7 @@ export interface TurnInput {
   cwd: string;
   prompt: string;
   timeoutMs: number;
+  permissions?: TurnPermissions;
 }
 
 export type AgentEvent =
@@ -215,5 +218,76 @@ export interface MessageRecord {
   body: string;
   sealed: boolean;
   seq: number;
+  createdAt: number;
+}
+
+// --- v2 Safe Write-Mode Domain Types ---
+
+export type TaskState =
+  | 'CREATED'
+  | 'PLANNING'
+  | 'AWAITING_PLAN_APPROVAL'
+  | 'IMPLEMENTING'
+  | 'VERIFYING'
+  | 'REVIEWING'
+  | 'AWAITING_FINAL_APPROVAL'
+  | 'READY_TO_APPLY'
+  | 'COMPLETED'
+  | 'PAUSED'
+  | 'INTERRUPTED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export type ApprovalKind = 'plan' | 'final';
+export type ApprovalState = 'pending' | 'approved' | 'rejected' | 'invalidated';
+
+export interface TaskRecord {
+  id: string;
+  roomId: string;
+  description: string;
+  state: TaskState;
+  implementer: AgentId;
+  reviewers: AgentId[];
+  baseSha: string;
+  planVersion: number;
+  planText: string | null;
+  planHash: string | null;
+  activeRevisionId: string | null;
+  revisionCount: number;
+  maxRevisions: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ApprovalRecord {
+  id: string;
+  taskId: string;
+  kind: ApprovalKind;
+  subjectHash: string;
+  state: ApprovalState;
+  actor: 'human';
+  reason: string | null;
+  createdAt: number;
+  resolvedAt: number | null;
+}
+
+export interface RevisionRecord {
+  id: string;
+  taskId: string;
+  baseSha: string;
+  diffHash: string;
+  diffPatch: string;
+  worktreePath: string;
+  branchName: string;
+  createdAt: number;
+}
+
+export interface CheckRecord {
+  id: string;
+  revisionId: string;
+  command: string;
+  exitCode: number;
+  durationMs: number;
+  outputExcerpt: string;
   createdAt: number;
 }
