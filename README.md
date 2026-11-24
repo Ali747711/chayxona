@@ -36,9 +36,10 @@ chayxona start
 # Try instantly with deterministic fake providers (0 LLM cost)
 chayxona debate "Cache-aside Redis vs read replicas" --fake --no-tui
 
-# Non-interactive CI / piped debate or audit (exit 0=complete, 2=degraded, 1=fatal)
+# Non-interactive CI / piped debate, audit, or GitHub PR cross-review
 chayxona debate "Should we split the auth service?" --no-tui
 chayxona audit diff --no-tui
+chayxona pr 42 --post
 ```
 
 ## Real 3-CLI Debate Example (Dogfooding Chayxona)
@@ -64,8 +65,8 @@ When we ran Chayxona's first live 3-CLI debate on its own `src/orchestrator/room
 | `/audit [diff\|staged\|head]` | Read-only audit of working tree diff, staged diff, or `HEAD` |
 | `/task <description>` | **Safe Write-Mode:** Plan -> `/approve` -> isolated Git worktree single-writer -> read-only cross-review -> `/apply` |
 | `/approve <id>` / `/reject <id> <reason>` | Resolve pending plan or final hash-bound approval |
-| `/diff` / `/apply <rev>` | Inspect colorized task diff / apply approved patch (refuses if `HEAD` diverged) |
-| `/agents` | List active agents and `@mention` usage |
+| `/diff` / `/checks` / `/apply <rev>` | Inspect full colorized task diff, check outputs, or apply approved patch |
+| `/agents` / `/role <agent> <lens>` | List agents or switch role lens (`architect`, `security`, `performance`, `skeptic`, `reviewer`, `implementer`) |
 | `@claude\|@codex\|@agy <msg>` | Targeted single-agent turn |
 | `@all <msg>` or plain text | Broadcast freeform turn (or queues R2 steering note during Blind R1) |
 | `Tab` | Autocomplete `/` or `@` while typing; toggle Findings & Dissent panel when idle |
@@ -76,7 +77,7 @@ When we ran Chayxona's first live 3-CLI debate on its own `src/orchestrator/room
 | `/pause` / `/continue` | Pause before Cross-Exam R2 / resume |
 | `/recover retry\|unseal\|r2` | Recover an interrupted round after `chayxona resume` |
 | `/stop [agent\|all]` | Cancel active turn(s) and reap detached POSIX process groups |
-| `/export [md\|jsonl] [path]` | Export secret-redacted transcript |
+| `/export [md\|jsonl\|pr] [path]` | Export secret-redacted transcript or GitHub PR decision card |
 
 ## Security & Compatibility
 - Read-only CLI profiles & Phase 0 verification: [docs/PROVIDER_COMPATIBILITY.md](docs/PROVIDER_COMPATIBILITY.md)
