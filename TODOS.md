@@ -15,3 +15,11 @@
 - **Cons:** Tight coupling to fast-moving vendor CLI protocols that vary across versions and can break on upstream updates.
 - **Context:** v1 deliberately uses stateless subprocess-per-turn over `stdin` + JSONL streaming so native read-only flags are guaranteed on every turn with minimal fragility. Revisit after Phase 0 and v1 usage provide concrete cold-start latency measurements.
 - **Depends on / blocked by:** v1 (`v0.1.0`) shipped + Phase 0/v1 cold-start latency measurements.
+
+## 3. Formal `DESIGN.md` Design System Doc
+- **What:** Create a dedicated `DESIGN.md` (via `/design-consultation`) documenting Chayxona's TUI design tokens, terminal breakpoints (`<80 cols`, `<24 rows`), and color/contrast guidelines.
+- **Why:** Gives open-source contributors a single source of truth before touching TUI components or building future web/docs surfaces.
+- **Pros:** Prevents visual drift, hardcoded colors, and wide-emoji Ink regressions from external PRs.
+- **Cons:** Small upfront doc effort while `src/tui/theme.ts` already enforces tokens in code.
+- **Context:** Added during `/plan-design-review` (`v0.3.0` -> `v0.4.0`). Currently tokens live in `src/tui/theme.ts` and `CONTRIBUTING.md` enforces `NO_COLOR=1` and 1-col glyph rules.
+- **Depends on / blocked by:** None.
