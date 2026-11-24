@@ -94,6 +94,44 @@ jobs:
 
 ---
 
+## Model Context Protocol (MCP) Server
+
+Chayxona includes a built-in stdio MCP server (`chayxona mcp`), allowing **Cursor**, **Claude Desktop**, and **Windsurf** to trigger multi-agent debates, audits, and PR reviews directly from your editor.
+
+### Available MCP Tools
+- **`chayxona_debate`** — Run an anti-sycophantic 2-round cross-model debate (Blind R1 -> Cross-Exam R2) across Claude, Codex, and Antigravity.
+- **`chayxona_audit`** — Independent read-only multi-agent audit on working tree diff, staged edits, or `HEAD`.
+- **`chayxona_review_pr`** — Cross-review GitHub pull requests and return structured findings & dissents.
+
+### Editor Setup
+
+Add Chayxona to your MCP config (`.cursor/mcp.json` or `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "chayxona": {
+      "command": "chayxona",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Or test with zero LLM cost using fake providers:
+```json
+{
+  "mcpServers": {
+    "chayxona": {
+      "command": "chayxona",
+      "args": ["mcp", "--fake"]
+    }
+  }
+}
+```
+
+---
+
 ## Safe Task Implementation Workflow (`/task`)
 
 When you want an agent to implement a feature or fix a bug, Chayxona guarantees **strict write isolation**:
