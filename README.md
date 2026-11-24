@@ -38,6 +38,9 @@ chayxona audit diff --no-tui
 |---|---|
 | `/debate <topic>` | Blind Round 1 -> Cross-Exam Round 2 across all active agents |
 | `/audit [diff\|staged\|head]` | Read-only audit of working tree diff, staged diff, or `HEAD` |
+| `/task <description>` | **v2 Safe Write-Mode:** Plan -> human `/approve` -> isolated Git worktree single-writer -> read-only cross-review -> `/apply` |
+| `/approve <id>` / `/reject <id> <reason>` | Resolve pending plan or final hash-bound approval |
+| `/apply <revision-id>` | Preflight & apply approved worktree patch to original repo (refuses if `HEAD` diverged) |
 | `@claude\|@codex\|@agy <msg>` | Targeted single-agent turn |
 | `@all <msg>` or plain text | Broadcast freeform turn (or queues R2 steering note during Blind R1) |
 | `/findings` or `Tab` | Toggle Findings & Dissent panel (`j`/`k` navigate, `Tab`/`Esc` back) |
