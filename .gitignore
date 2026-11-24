@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.gstack/
+*.log
+.DS_Store
+.env
+.env.*
+GSTACK_COMMANDS.md
+.gstack 
