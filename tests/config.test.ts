@@ -2,7 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CONFIG_FILENAME, DEFAULT_PROJECT_CONFIG, loadProjectConfig, writeDefaultConfig } from '../src/config/config.js';
+import {
+  CONFIG_FILENAME,
+  DEFAULT_PROJECT_CONFIG,
+  DEFAULT_WORKFLOW_CONTENT,
+  loadProjectConfig,
+  writeDefaultConfig,
+  writeDefaultWorkflow,
+} from '../src/config/config.js';
 
 describe('project config (.chayxona.json)', () => {
   it('returns safe defaults when no .chayxona.json exists', () => {
@@ -47,6 +54,25 @@ describe('project config (.chayxona.json)', () => {
     try {
       fs.writeFileSync(path.join(dir, CONFIG_FILENAME), JSON.stringify({ version: 1, allowUnsafeBypass: true }));
       expect(() => loadProjectConfig(dir)).toThrow(/Invalid .chayxona.json schema/i);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('scaffolds .github/workflows/chayxona-review.yml cleanly via writeDefaultWorkflow', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chayxona-wf-'));
+    try {
+      const written = writeDefaultWorkflow(dir);
+      expect(written).toBe(path.join(dir, '.github', 'workflows', 'chayxona-review.yml'));
+      expect(fs.existsSync(written)).toBe(true);
+      expect(fs.readFileSync(written, 'utf8')).toBe(DEFAULT_WORKFLOW_CONTENT);
+
+      // Fails without force if already exists
+      expect(() => writeDefaultWorkflow(dir, false)).toThrow(/already exists/i);
+
+      // Overwrites cleanly with force = true
+      const overwritten = writeDefaultWorkflow(dir, true);
+      expect(overwritten).toBe(written);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

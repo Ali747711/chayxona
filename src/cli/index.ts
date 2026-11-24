@@ -10,7 +10,7 @@ import { ClaudeAdapter } from '../adapters/claude.js';
 import { CodexAdapter } from '../adapters/codex.js';
 import type { AgentAdapter } from '../adapters/contract.js';
 import { FakeAgentAdapter } from '../adapters/fake.js';
-import { loadProjectConfig, writeDefaultConfig } from '../config/config.js';
+import { loadProjectConfig, writeDefaultConfig, writeDefaultWorkflow } from '../config/config.js';
 import { ALL_AGENTS, type AgentId, type RoomRecord } from '../domain/types.js';
 import { inspectRepo, type AuditMode } from '../orchestrator/git-inspector.js';
 import { RoomService } from '../orchestrator/room-service.js';
@@ -134,11 +134,17 @@ program
 program
   .command('init')
   .description('Create a default .chayxona.json config file in the current repository')
-  .option('--force', 'Overwrite existing .chayxona.json', false)
-  .action((opts: { force?: boolean }) => {
+  .option('--workflow', 'Also scaffold .github/workflows/chayxona-review.yml for PR reviews', false)
+  .option('--action', 'Alias for --workflow', false)
+  .option('--force', 'Overwrite existing files', false)
+  .action((opts: { force?: boolean; workflow?: boolean; action?: boolean }) => {
     const repo = inspectRepo(process.cwd());
     const filePath = writeDefaultConfig(repo.repoPath, Boolean(opts.force));
     process.stdout.write(`Created ${filePath}\n`);
+    if (opts.workflow || opts.action) {
+      const workflowPath = writeDefaultWorkflow(repo.repoPath, Boolean(opts.force));
+      process.stdout.write(`Created ${workflowPath}\n`);
+    }
   });
 
 program
