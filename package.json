@@ -7,7 +7,7 @@
     "node": ">=22.5.0"
   },
   "bin": {
-    "chayxona": "./dist/cli/index.js"
+    "chayxona": "./bin/chayxona.mjs"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

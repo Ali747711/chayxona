@@ -16,19 +16,20 @@ Requires **Node.js >= 22.5** (uses built-in `node:sqlite`) and at least 2 of `cl
 ```bash
 npm install
 npm run build
+npm link
 
 # Check local CLIs and read-only profiles
-node --no-warnings dist/cli/index.js doctor
+chayxona doctor
 
 # Start an interactive read-only room
-node --no-warnings dist/cli/index.js start
+chayxona start
 
 # Try immediately with deterministic fake providers (no live LLM calls)
-node --no-warnings dist/cli/index.js debate "Cache-aside Redis vs read replicas" --fake --no-tui
+chayxona debate "Cache-aside Redis vs read replicas" --fake --no-tui
 
 # Non-interactive CI / piped debate or audit (exit 0=complete, 2=degraded, 1=fatal)
-node --no-warnings dist/cli/index.js debate "Should we split the auth service?" --no-tui
-node --no-warnings dist/cli/index.js audit diff --no-tui
+chayxona debate "Should we split the auth service?" --no-tui
+chayxona audit diff --no-tui
 ```
 
 ## In-Room Commands
