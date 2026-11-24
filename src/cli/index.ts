@@ -83,11 +83,24 @@ async function resolveReadyAdapters(
   return { activeAgents, activeAdapters };
 }
 
+function getPackageVersion(): string {
+  try {
+    const pkgPath = new URL('../../package.json', import.meta.url);
+    if (fs.existsSync(pkgPath)) {
+      const raw = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      if (typeof raw.version === 'string') return raw.version;
+    }
+  } catch {
+    // fallback
+  }
+  return '0.5.0';
+}
+
 const program = new Command();
 program
   .name('chayxona')
   .description('Local-first terminal collaboration room for Claude Code, Codex, and Google Antigravity CLIs')
-  .version('0.1.0');
+  .version(getPackageVersion());
 
 program
   .command('doctor')
