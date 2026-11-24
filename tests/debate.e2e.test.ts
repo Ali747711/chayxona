@@ -223,4 +223,30 @@ describe('RoomService E2E (Blind R1 -> Cross-Exam R2)', () => {
     db.close();
     fs.rmSync(repo, { recursive: true, force: true });
   });
+
+  it('halts queued agents on /stop all when maxConcurrency=1 and clears pendingR2 on new rounds', async () => {
+    const repo = makeTempRepo();
+    const db = new ChayxonaDB(':memory:');
+    const room = makeRoom(repo, ['claude', 'codex', 'agy'], false, 24);
+    room.maxConcurrency = 1;
+    db.createRoom(room);
+
+    const adapters = new Map<AgentId, AgentAdapter>([
+      ['claude', new FakeAgentAdapter('claude', () => ({ hangUntilAbort: true }))],
+      ['codex', new FakeAgentAdapter('codex', () => ({ delayMs: 5, chunks: ['should not run'] }))],
+      ['agy', new FakeAgentAdapter('agy', () => ({ delayMs: 5, chunks: ['should not run'] }))],
+    ]);
+
+    const service = new RoomService(room, db, adapters, new SecretRedactor({}));
+    const p = service.runDebateOrAudit('debate', 'Queued cancel test');
+    setTimeout(() => service.stop('all'), 25);
+    const res = await p;
+
+    expect(res.status).toBe('cancelled');
+    // Only claude ever spawned; codex & agy stayed unspawned
+    expect(db.countRoomTurns(room.id)).toBe(1);
+
+    db.close();
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
 });

@@ -54,6 +54,8 @@ export class RoomService extends EventEmitter {
   private readonly activeControllers = new Map<AgentId, AbortController>();
   private activeRound: RoundRecord | null = null;
   private paused = false;
+  private batchHalted = false;
+  private inFlight = false;
   private pendingR2Context: { roundId: number; topic: string; participants: AgentId[] } | null = null;
 
   constructor(
@@ -70,7 +72,7 @@ export class RoomService extends EventEmitter {
   }
 
   isRunning(): boolean {
-    return this.activeControllers.size > 0;
+    return this.inFlight || this.activeControllers.size > 0;
   }
 
   isPaused(): boolean {
@@ -101,9 +103,18 @@ export class RoomService extends EventEmitter {
   }
 
   async continueScheduling(): Promise<RunCommandResult | null> {
+    if (this.isRunning()) {
+      throw new Error('Cannot /continue while another round is running.');
+    }
     this.paused = false;
     if (this.pendingR2Context) {
       const ctx = this.pendingR2Context;
+      const budget = this.getBudgetStatus(ctx.participants.length);
+      if (!budget.ok) {
+        throw new Error(
+          `Insufficient room turn budget (${budget.remaining} remaining, need ${ctx.participants.length}). Run /budget +12 to extend.`,
+        );
+      }
       this.pendingR2Context = null;
       this.emitNotice('status', `Resuming Cross-Exam Round 2 for round #${ctx.roundId}...`);
       return this.runCrossExamR2(ctx.roundId, ctx.topic, ctx.participants);
@@ -139,6 +150,7 @@ export class RoomService extends EventEmitter {
    */
   stop(target: AgentId | 'all' = 'all'): void {
     if (target === 'all') {
+      this.batchHalted = true;
       if (this.activeRound) {
         this.db.updateRound(this.room.id, this.activeRound.id, {
           cancelled: true,
@@ -180,6 +192,7 @@ export class RoomService extends EventEmitter {
       this.emitNotice('warning', `Need at least 2 completed takes before unsealing (currently ${doneCount}).`);
       return false;
     }
+    this.batchHalted = true;
     let interruptedAny = false;
     for (const [agentId, ctrl] of this.activeControllers.entries()) {
       ctrl.abort();
@@ -196,6 +209,7 @@ export class RoomService extends EventEmitter {
     if (this.isRunning()) {
       throw new Error('Another round is already running. Wait for completion or run /stop.');
     }
+    this.pendingR2Context = null;
 
     const activeAgents = this.room.agents.filter((a) => this.adapters.has(a));
     if (activeAgents.length === 0) {
@@ -413,6 +427,7 @@ export class RoomService extends EventEmitter {
     if (this.isRunning()) {
       throw new Error('Another turn is already running. Wait or run /stop.');
     }
+    this.pendingR2Context = null;
     const activeTargets = recipients.filter((a) => this.adapters.has(a));
     if (activeTargets.length === 0) {
       throw new Error('None of the requested agents are available.');
@@ -564,9 +579,11 @@ export class RoomService extends EventEmitter {
     const failed: AgentId[] = [];
     const concurrency = Math.max(1, Math.min(this.room.maxConcurrency, agents.length));
     const queue = [...agents];
+    this.batchHalted = false;
+    this.inFlight = true;
 
     const worker = async (): Promise<void> => {
-      while (queue.length > 0) {
+      while (queue.length > 0 && !this.batchHalted) {
         const agentId = queue.shift();
         if (!agentId) break;
         const ok = await this.runSingleTurn(agentId, roundId, roundPhase, sealed, promptFactory(agentId));
@@ -575,7 +592,17 @@ export class RoomService extends EventEmitter {
       }
     };
 
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    try {
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+      // Mark any unstarted agents as failed when halted via /stop all or /unseal
+      while (queue.length > 0) {
+        const skipped = queue.shift();
+        if (skipped) failed.push(skipped);
+      }
+    } finally {
+      this.inFlight = false;
+      this.batchHalted = false;
+    }
     return { succeeded, failed };
   }
 
@@ -696,10 +723,12 @@ export class RoomService extends EventEmitter {
       const safeMsg = this.redactor.redact(err instanceof Error ? err.message : String(err));
       this.emitNotice('error', `${agentId} failed: ${safeMsg}`);
     } finally {
-      this.activeControllers.delete(agentId);
+      if (this.activeControllers.get(agentId) === controller) {
+        this.activeControllers.delete(agentId);
+      }
     }
 
-    if (cancelled || controller.signal.aborted) {
+    if (!completed && (cancelled || controller.signal.aborted)) {
       this.db.finishTurn(turnId, 'interrupted', 'cancelled');
       return false;
     }
