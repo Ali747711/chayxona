@@ -21,6 +21,7 @@ import { SecretRedactor } from '../security/redactor.js';
 import { App } from '../tui/App.js';
 import { formatDoctorReport, runDoctor } from './doctor.js';
 import { runNoTuiCommand } from './no-tui.js';
+import { buildPrDebateTopic, fetchGitHubPr, postPrReviewComment } from './pr-review.js';
 
 function parseAgentsFlag(raw?: string): AgentId[] {
   if (!raw) return [...ALL_AGENTS];
@@ -285,6 +286,60 @@ program
     const service = new RoomService(room, db, activeAdapters, redactor);
     try {
       const res = await runNoTuiCommand({ service, kind: 'audit', topic: '', auditMode: mode });
+      process.exitCode = res.exitCode;
+    } finally {
+      lock.release();
+      db.close();
+    }
+  });
+
+program
+  .command('pr <number>')
+  .description('Cross-review a GitHub PR with Blind R1 -> Cross-Exam R2 via gh CLI')
+  .option('--post', 'Post the consensus Findings & Dissent card as a GitHub PR comment', false)
+  .option('--agents <list>', 'Comma-separated agents (claude,codex,agy)')
+  .option('--turn-timeout <dur>', 'Per-turn timeout (e.g. 180s)', '180s')
+  .option('--solo', 'Allow 1 agent', false)
+  .option('--fake', 'Use deterministic fake providers', false)
+  .option('--allow-in-repo', 'Allow data dir inside target repo', false)
+  .action(async (prNumber: string, opts) => {
+    const redactor = new SecretRedactor();
+    const repo = inspectRepo(process.cwd());
+    const pr = fetchGitHubPr(prNumber, repo.repoPath);
+    const topic = buildPrDebateTopic(pr, redactor);
+
+    const requested = parseAgentsFlag(opts.agents);
+    const allAdapters = createAdapters(redactor, Boolean(opts.fake));
+    const { activeAgents, activeAdapters } = await resolveReadyAdapters(requested, allAdapters, Boolean(opts.solo));
+
+    const { db, dataDir } = openDatabase(repo.repoPath, Boolean(opts.allowInRepo));
+    const roomId = `pr-${pr.number}-${randomUUID().slice(0, 6)}`;
+    const lock = RoomLock.acquire(dataDir, roomId);
+    const now = Date.now();
+    const room: RoomRecord = {
+      id: roomId,
+      repoPath: repo.repoPath,
+      baseSha: repo.baseSha,
+      status: 'active',
+      maxTurns: 24,
+      agents: activeAgents,
+      solo: Boolean(opts.solo),
+      turnTimeoutMs: parseTimeoutMs(opts.turnTimeout),
+      maxConcurrency: 3,
+      createdAt: now,
+      updatedAt: now,
+    };
+    db.createRoom(room);
+
+    const service = new RoomService(room, db, activeAdapters, redactor);
+    try {
+      const res = await runNoTuiCommand({ service, kind: 'debate', topic });
+      const card = service.exportRoom('pr');
+      process.stdout.write(`\n${card}\n`);
+      if (opts.post && res.exitCode !== 1) {
+        postPrReviewComment(prNumber, card, repo.repoPath);
+        process.stdout.write(`Posted Chayxona cross-model review comment to PR #${pr.number}.\n`);
+      }
       process.exitCode = res.exitCode;
     } finally {
       lock.release();
