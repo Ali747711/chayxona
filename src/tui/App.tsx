@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentEvent, AgentId, FindingRecord, MessageRecord, RoundRecord } from '../domain/types.js';
+import { filterDiffFiles, formatDiffOverview, parseGitDiff } from '../orchestrator/diff-parser.js';
 import type { RoomService, RoomStatusEvent } from '../orchestrator/room-service.js';
 import type { TaskService } from '../orchestrator/task-service.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
@@ -48,7 +50,8 @@ const HELP_TEXT = [
   '  /approve [id]            Approve plan or final verification (defaults to active task)',
   '  /reject [reason]         Revise plan or cancel active task and clean up worktree',
   '  /apply [revision-id]     Apply approved worktree patch cleanly to main repository',
-  '  /diff | /checks          Inspect colorized task diff or allowlisted check runs',
+  '  /diff [file|number]      Interactive diff browser (overview or file hunks)',
+  '  /checks                  Inspect allowlisted check runs for active task',
   '  /agents                  List active agents, roles, and current status',
   '  /role <agent> <lens>     Set lens (architect|security|performance|skeptic|reviewer|implementer)',
   '  @claude|@codex|@agy <m>  Targeted single-agent turn (or steer FAILED tasks)',
@@ -352,20 +355,51 @@ export const App: React.FC<AppProps> = ({
     }
     if (cmd.kind === 'diff') {
       const rev = taskService?.getActiveRevision();
-      if (!rev) {
-        setNotice({ type: 'warning', text: 'No active /task revision yet. Start one with /task <description>.' });
+      let rawPatch = rev?.diffPatch.trim() ?? '';
+      let sourceLabel = rev ? `TASK ${rev.id}` : '';
+
+      if (!rawPatch) {
+        try {
+          rawPatch = execFileSync('git', ['diff', 'HEAD'], {
+            cwd: service.room.repoPath,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }).trim();
+          sourceLabel = 'REPO WORKING TREE';
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!rawPatch) {
+        pushSystemItem('No changes detected (clean diff).', 'DIFF');
         return;
       }
-      const patch = rev.diffPatch.trim();
-      if (!patch) {
-        pushSystemItem(`Revision ${rev.id} has an empty diff.`, 'DIFF');
+
+      const parsed = parseGitDiff(rawPatch);
+      if (cmd.file) {
+        const filtered = filterDiffFiles(parsed, cmd.file);
+        if (filtered.length === 0) {
+          setNotice({
+            type: 'warning',
+            text: `No modified file matches "${cmd.file}". Run /diff to view all changed files.`,
+          });
+          return;
+        }
+        for (const f of filtered) {
+          pushSystemItem(f.raw.trim(), `DIFF: ${f.file} (${sourceLabel})`, true);
+        }
         return;
       }
-      const truncated = patch.length > 6000;
-      const body = truncated
-        ? `${patch.slice(0, 6000)}\n\n[Showing first 6KB — run /export md for full transcript]`
-        : patch;
-      pushSystemItem(body, `DIFF ${rev.id}`, true);
+
+      const overview = formatDiffOverview(parsed);
+      if (parsed.files.length <= 2) {
+        const full = `${overview}\n\n${rawPatch.slice(0, 8000)}`;
+        pushSystemItem(full, `DIFF (${sourceLabel})`, true);
+      } else {
+        const preview = `${overview}\n\n---\nShowing file 1 (${parsed.files[0].file}):\n${parsed.files[0].raw.slice(0, 4000)}`;
+        pushSystemItem(preview, `DIFF (${sourceLabel})`, true);
+      }
       return;
     }
     if (cmd.kind === 'checks') {

@@ -10,7 +10,7 @@ export type ParsedCommand =
   | { kind: 'role'; agent?: AgentId; role?: AgentRole; invalid?: string }
   | { kind: 'findings' }
   | { kind: 'summary' }
-  | { kind: 'diff' }
+  | { kind: 'diff'; file?: string }
   | { kind: 'checks' }
   | { kind: 'pause' }
   | { kind: 'continue' }
@@ -57,7 +57,10 @@ export function parseUserInput(raw: string): ParsedCommand {
   }
   if (trimmed === '/findings') return { kind: 'findings' };
   if (trimmed === '/summary') return { kind: 'summary' };
-  if (trimmed === '/diff') return { kind: 'diff' };
+  if (trimmed === '/diff' || trimmed.startsWith('/diff ')) {
+    const file = trimmed.slice(5).trim();
+    return { kind: 'diff', file: file.length > 0 ? file : undefined };
+  }
   if (trimmed === '/checks') return { kind: 'checks' };
   if (trimmed === '/pause') return { kind: 'pause' };
   if (trimmed === '/continue') return { kind: 'continue' };
@@ -145,7 +148,7 @@ export const SLASH_COMMANDS: readonly { cmd: string; takesArg: boolean }[] = [
   { cmd: '/task', takesArg: true },
   { cmd: '/approve', takesArg: false },
   { cmd: '/reject', takesArg: false },
-  { cmd: '/diff', takesArg: false },
+  { cmd: '/diff', takesArg: true },
   { cmd: '/checks', takesArg: false },
   { cmd: '/apply', takesArg: false },
   { cmd: '/agents', takesArg: false },

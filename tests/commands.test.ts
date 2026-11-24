@@ -32,6 +32,9 @@ describe('TUI command parser', () => {
     });
     expect(parseUserInput('/approve')).toEqual({ kind: 'approve', id: undefined });
     expect(parseUserInput('/approve plan-123')).toEqual({ kind: 'approve', id: 'plan-123' });
+    expect(parseUserInput('/diff')).toEqual({ kind: 'diff', file: undefined });
+    expect(parseUserInput('/diff 1')).toEqual({ kind: 'diff', file: '1' });
+    expect(parseUserInput('/diff src/index.ts')).toEqual({ kind: 'diff', file: 'src/index.ts' });
     expect(parseUserInput('/apply')).toEqual({ kind: 'apply', revisionId: undefined });
     expect(parseUserInput('/apply rev-456')).toEqual({ kind: 'apply', revisionId: 'rev-456' });
     expect(parseUserInput('/reject')).toEqual({ kind: 'reject', reason: undefined });
@@ -40,7 +43,7 @@ describe('TUI command parser', () => {
   });
 
   it('suggests matching /commands and @mentions while typing', () => {
-    expect(getInputSuggestions('/d', ['claude', 'codex', 'agy'])).toEqual(['/debate ', '/diff']);
+    expect(getInputSuggestions('/d', ['claude', 'codex', 'agy'])).toEqual(['/debate ', '/diff ']);
     expect(getInputSuggestions('@c', ['claude', 'codex', 'agy'])).toEqual(['@claude ', '@codex ']);
     expect(getInputSuggestions('/debate already has space', ['claude'])).toEqual([]);
   });
