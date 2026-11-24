@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import fs from 'node:fs';
@@ -9,12 +9,14 @@ import type { TaskService } from '../orchestrator/task-service.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
 import { isPathInside } from '../persistence/db.js';
 import { FindingsPanel } from './FindingsPanel.js';
+import { createTheme } from './theme.js';
 
 export interface StaticEntry {
   key: string;
   sender: string;
   meta: string;
   body: string;
+  isDiff?: boolean;
 }
 
 export interface AppProps {
@@ -39,6 +41,7 @@ const HELP_TEXT = [
   '  /audit [diff|staged|head] Independent read-only audit',
   '  /task <description>      Plan -> approve -> isolated worktree write -> review -> /apply',
   '  /approve <id> | /reject <id> <reason>  Resolve pending plan or final approval',
+  '  /diff                    Show colorized diff of active task revision',
   '  /apply <revision-id>     Apply approved worktree patch to original repo',
   '  @claude|@codex|@agy <m>  Targeted single-agent turn',
   '  @all <msg> or plain text Broadcast freeform turn (or R2 steering note during Blind R1)',
@@ -64,6 +67,8 @@ export const App: React.FC<AppProps> = ({
   onExitCleanup,
 }) => {
   const { exit } = useApp();
+  const theme = useMemo(() => createTheme(), []);
+
   const [staticItems, setStaticItems] = useState<StaticEntry[]>(() => {
     const intro: StaticEntry[] = [
       {
@@ -104,7 +109,7 @@ export const App: React.FC<AppProps> = ({
   const [showFindings, setShowFindings] = useState(false);
   const [findings, setFindings] = useState<FindingRecord[]>(initialFindings);
   const [round, setRound] = useState<RoundRecord | null>(service.getActiveRound());
-  const [notice, setNotice] = useState<string>('');
+  const [notice, setNotice] = useState<{ type: RoomStatusEvent['type']; text: string } | null>(null);
   const [queuedSteeringCount, setQueuedSteeringCount] = useState(0);
   const [agentStates, setAgentStates] = useState<Record<string, AgentLiveState>>(() => {
     const init: Record<string, AgentLiveState> = {};
@@ -117,11 +122,11 @@ export const App: React.FC<AppProps> = ({
   const previewBufRef = useRef<Record<string, string>>({});
   const seqRef = useRef(0);
 
-  const pushSystemItem = (body: string, label = 'SYSTEM'): void => {
+  const pushSystemItem = (body: string, label = 'SYSTEM', isDiff = false): void => {
     seqRef.current += 1;
     setStaticItems((prev) => [
       ...prev,
-      { key: `sys-${Date.now()}-${seqRef.current}`, sender: label, meta: '', body },
+      { key: `sys-${Date.now()}-${seqRef.current}`, sender: label, meta: '', body, isDiff },
     ]);
   };
 
@@ -165,7 +170,7 @@ export const App: React.FC<AppProps> = ({
     };
 
     const onNotice = (n: RoomStatusEvent): void => {
-      setNotice(n.text);
+      setNotice(n);
       if (n.type === 'error' || n.type === 'warning') {
         pushSystemItem(n.text, n.type.toUpperCase());
       }
@@ -238,7 +243,6 @@ export const App: React.FC<AppProps> = ({
     setInput('');
     if (!trimmed) return;
 
-    // Immediate control commands allowed anytime
     if (trimmed === '/quit' || trimmed === '/exit') {
       service.stop('all');
       onExitCleanup();
@@ -255,6 +259,15 @@ export const App: React.FC<AppProps> = ({
     }
     if (trimmed === '/summary') {
       pushSystemItem(service.buildLocalSummary(), 'SUMMARY');
+      return;
+    }
+    if (trimmed === '/diff') {
+      const latest = taskService?.getLatestTask();
+      if (!latest || !latest.activeRevisionId) {
+        setNotice({ type: 'warning', text: 'No active task revision to diff yet.' });
+        return;
+      }
+      pushSystemItem(`Active revision: ${latest.activeRevisionId} (state: ${latest.state})`, 'DIFF', true);
       return;
     }
     if (trimmed === '/pause') {
@@ -286,7 +299,7 @@ export const App: React.FC<AppProps> = ({
           pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
         });
       } else {
-        setNotice('Usage: /recover retry | /recover unseal | /recover r2');
+        setNotice({ type: 'warning', text: 'Usage: /recover retry | /recover unseal | /recover r2' });
       }
       return;
     }
@@ -323,10 +336,12 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    // Composer state machine during Blind R1
     if (service.isRunning() && round?.phase === 'blind_r1') {
       if (trimmed.startsWith('/') || trimmed.startsWith('@')) {
-        setNotice('Blind Round 1 is running: only plain-text R2 steering notes or /stop, /pause, /unseal are allowed.');
+        setNotice({
+          type: 'warning',
+          text: 'Blind Round 1 is running: only plain-text R2 steering notes or /stop, /pause, /unseal are allowed.',
+        });
         return;
       }
       service.queueSteeringNote(trimmed);
@@ -335,14 +350,14 @@ export const App: React.FC<AppProps> = ({
     }
 
     if (service.isRunning()) {
-      setNotice('Turns are still running. Wait for completion or run /stop.');
+      setNotice({ type: 'warning', text: 'Turns are still running. Wait for completion or run /stop.' });
       return;
     }
 
     if (trimmed.startsWith('/task')) {
       const desc = trimmed.slice(5).trim();
       if (!desc || !taskService) {
-        setNotice(taskService ? 'Usage: /task <description>' : 'Task service unavailable in this session.');
+        setNotice({ type: 'warning', text: taskService ? 'Usage: /task <description>' : 'Task service unavailable.' });
         return;
       }
       void taskService
@@ -362,12 +377,15 @@ export const App: React.FC<AppProps> = ({
     if (trimmed.startsWith('/approve')) {
       const id = trimmed.slice(8).trim();
       if (!id || !taskService) {
-        setNotice('Usage: /approve <approval-id>');
+        setNotice({ type: 'warning', text: 'Usage: /approve <approval-id>' });
         return;
       }
       void taskService
         .approve(id)
         .then((res) => {
+          if (res.revision?.diffPatch) {
+            pushSystemItem(res.revision.diffPatch.slice(0, 6000), `DIFF ${res.revision.id}`, true);
+          }
           pushSystemItem(
             `Task ${res.task.id} -> ${res.task.state}${res.revision ? ` (rev ${res.revision.id})` : ''}${res.finalApproval ? `\nRun /approve ${res.finalApproval.id} to unlock /apply.` : ''}`,
             'TASK',
@@ -384,7 +402,7 @@ export const App: React.FC<AppProps> = ({
       const [id, ...reasonParts] = rest.split(/\s+/);
       const reason = reasonParts.join(' ') || 'Rejected by owner';
       if (!id || !taskService) {
-        setNotice('Usage: /reject <approval-id> <reason>');
+        setNotice({ type: 'warning', text: 'Usage: /reject <approval-id> <reason>' });
         return;
       }
       void taskService
@@ -404,7 +422,7 @@ export const App: React.FC<AppProps> = ({
     if (trimmed.startsWith('/apply')) {
       const revId = trimmed.slice(6).trim();
       if (!revId || !taskService) {
-        setNotice('Usage: /apply <revision-id>');
+        setNotice({ type: 'warning', text: 'Usage: /apply <revision-id>' });
         return;
       }
       try {
@@ -416,11 +434,10 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    // Idle dispatch
     if (trimmed.startsWith('/debate')) {
       const topic = trimmed.slice(7).trim();
       if (!topic) {
-        setNotice('Usage: /debate <topic>');
+        setNotice({ type: 'warning', text: 'Usage: /debate <topic>' });
         return;
       }
       void service.runDebateOrAudit('debate', topic).catch((err: unknown) => {
@@ -452,7 +469,6 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    // Plain text when idle -> broadcast 1 freeform turn to each active agent
     void service.runFreeform([...service.room.agents], trimmed).catch((err: unknown) => {
       pushSystemItem(err instanceof Error ? err.message : String(err), 'ERROR');
     });
@@ -461,49 +477,92 @@ export const App: React.FC<AppProps> = ({
   const budget = service.getBudgetStatus();
   const isBlind = round?.phase === 'blind_r1';
   const phaseLabel = round ? round.phase.toUpperCase() : 'IDLE';
+  const frameBorderColor = isBlind ? theme.borderBlind : service.isRunning() ? theme.borderActive : theme.border;
+  const noticeColor =
+    notice?.type === 'error' ? theme.error : notice?.type === 'warning' ? theme.warning : theme.muted;
 
   return (
     <Box flexDirection="column">
       {/* 1. Immutable completed transcript in standard terminal buffer */}
       <Static items={staticItems}>
-        {(item) => (
-          <Box key={item.key} flexDirection="column" marginBottom={1}>
-            <Text bold>
-              {item.sender}
-              {item.meta ? ` (${item.meta})` : ''}
-            </Text>
-            <Text>{item.body}</Text>
-          </Box>
-        )}
+        {(item) => {
+          const senderColor = theme.senderColor(item.sender);
+          return (
+            <Box key={item.key} flexDirection="column" marginBottom={1}>
+              <Box gap={1}>
+                <Text bold color={senderColor}>
+                  ● {item.sender}
+                </Text>
+                {item.meta ? <Text color={theme.muted}>({item.meta})</Text> : null}
+              </Box>
+              {item.isDiff ? (
+                <Box flexDirection="column" paddingLeft={2}>
+                  {item.body.split('\n').map((line, i) => (
+                    <Text key={i} color={theme.diffLineColor(line)}>
+                      {line}
+                    </Text>
+                  ))}
+                </Box>
+              ) : (
+                <Box paddingLeft={2}>
+                  <Text>{item.body}</Text>
+                </Box>
+              )}
+            </Box>
+          );
+        }}
       </Static>
 
       {/* 2. Dynamic bottom region */}
-      <Box flexDirection="column" borderStyle="single" paddingX={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor={frameBorderColor} paddingX={1}>
         <Box justifyContent="space-between">
-          <Text bold>
-            CHAYXONA / {path.basename(service.room.repoPath)} / {service.room.id} [READ-ONLY]
-          </Text>
-          <Text>
-            {phaseLabel} · Turns {budget.used}/{budget.max}
-          </Text>
+          <Box gap={1}>
+            <Text bold color={theme.brand}>
+              ☕ CHAYXONA
+            </Text>
+            <Text color={theme.muted}>/</Text>
+            <Text bold>{path.basename(service.room.repoPath)}</Text>
+            <Text color={theme.muted}>({service.room.id})</Text>
+            <Text bold color={theme.readOnlyBadge}>
+              [READ-ONLY]
+            </Text>
+          </Box>
+          <Box gap={1}>
+            <Text bold color={isBlind ? theme.borderBlind : theme.phaseBadge}>
+              {phaseLabel}
+            </Text>
+            <Text color={theme.muted}>
+              · Turns {budget.used}/{budget.max}
+            </Text>
+          </Box>
         </Box>
 
-        <Box gap={2} flexWrap="wrap">
+        <Box gap={2} flexWrap="wrap" marginTop={0}>
           {service.room.agents.map((a) => {
             const st = agentStates[a] ?? { status: 'idle', detail: '' };
+            const { glyph, color: glyphColor } = theme.statusGlyph(st.status);
+            const agentColor = theme.senderColor(a);
             return (
-              <Text key={a} dimColor={st.status === 'idle'}>
-                [{a.toUpperCase()}] {st.detail || st.status}
-              </Text>
+              <Box key={a} gap={1}>
+                <Text color={glyphColor}>{glyph}</Text>
+                <Text bold color={st.status === 'idle' ? theme.muted : agentColor}>
+                  {a.toUpperCase()}
+                </Text>
+                <Text color={st.detail.startsWith('tool:') ? theme.tool : theme.muted}>
+                  {st.detail || st.status}
+                </Text>
+              </Box>
             );
           })}
         </Box>
 
         {isBlind ? (
           <Box flexDirection="column" marginTop={1}>
-            <Text bold>BLIND ROUND 1 — Takes sealed until all finish ([Ctrl+U] unseal straggler)</Text>
+            <Text bold color={theme.borderBlind}>
+              ◆ BLIND ROUND 1 — Takes sealed until all finish ([Ctrl+U] unseal straggler)
+            </Text>
             {queuedSteeringCount > 0 ? (
-              <Text dimColor>Queued for R2: {queuedSteeringCount} steering note(s)</Text>
+              <Text color={theme.phaseBadge}>↳ Queued for R2: {queuedSteeringCount} steering note(s)</Text>
             ) : null}
           </Box>
         ) : null}
@@ -512,32 +571,42 @@ export const App: React.FC<AppProps> = ({
           <Box flexDirection="column" marginTop={1}>
             {Object.entries(livePreview).map(([agent, preview]) =>
               preview ? (
-                <Text key={agent} dimColor>
-                  {agent.toUpperCase()} ... {preview.replace(/\s+/g, ' ').slice(-120)}
-                </Text>
+                <Box key={agent} gap={1}>
+                  <Text bold color={theme.senderColor(agent)}>
+                    {agent.toUpperCase()}
+                  </Text>
+                  <Text color={theme.muted}>{preview.replace(/\s+/g, ' ').slice(-110)}</Text>
+                </Box>
               ) : null,
             )}
           </Box>
         ) : null}
 
-        {notice ? <Text dimColor>{notice}</Text> : null}
+        {notice ? <Text color={noticeColor}>ℹ {notice.text}</Text> : null}
 
         {showFindings ? (
-          <FindingsPanel findings={findings} active={showFindings} onClose={() => setShowFindings(false)} />
+          <FindingsPanel
+            findings={findings}
+            active={showFindings}
+            theme={theme}
+            onClose={() => setShowFindings(false)}
+          />
         ) : null}
 
         <Box marginTop={1} justifyContent="space-between">
           <Box flexGrow={1}>
-            <Text bold>{isBlind ? '[R2 steer] > ' : '> '}</Text>
+            <Text bold color={isBlind ? theme.borderBlind : theme.prompt}>
+              {isBlind ? '[R2 steer] › ' : '› '}
+            </Text>
             <TextInput
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
               focus={!showFindings}
-              placeholder={isBlind ? 'Type a steering note for Round 2...' : '/debate <topic>, /audit, @agent, or /help'}
+              placeholder={isBlind ? 'Type a steering note for Round 2...' : '/debate <topic>, /audit, /task, @agent, or /help'}
             />
           </Box>
-          <Text dimColor>
+          <Text color={findings.length > 0 && !isBlind ? theme.brand : theme.muted}>
             [Tab] Findings({isBlind ? 'sealed' : findings.length})
           </Text>
         </Box>
