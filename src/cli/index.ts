@@ -21,7 +21,14 @@ import { SecretRedactor } from '../security/redactor.js';
 import { App } from '../tui/App.js';
 import { formatDoctorReport, runDoctor } from './doctor.js';
 import { runNoTuiCommand } from './no-tui.js';
-import { buildPrDebateTopic, fetchGitHubPr, postPrReviewComment } from './pr-review.js';
+import {
+  buildPrDebateTopic,
+  evaluatePrExitCode,
+  fetchGitHubPr,
+  hasAvailableVendorKeys,
+  postOrUpdatePrReviewComment,
+  resolvePrNumber,
+} from './pr-review.js';
 
 function parseAgentsFlag(raw?: string): AgentId[] {
   if (!raw) return [...ALL_AGENTS];
@@ -304,15 +311,25 @@ program
   });
 
 program
-  .command('pr <number>')
+  .command('pr [number]')
   .description('Cross-review a GitHub PR with Blind R1 -> Cross-Exam R2 via gh CLI')
+  .option('--ci', 'Run in CI mode with auto-detected PR number and findings exit codes', false)
   .option('--post', 'Post the consensus Findings & Dissent card as a GitHub PR comment', false)
   .option('--agents <list>', 'Comma-separated agents (claude,codex,agy)')
   .option('--turn-timeout <dur>', 'Per-turn timeout (e.g. 180s)', '180s')
   .option('--solo', 'Allow 1 agent', false)
   .option('--fake', 'Use deterministic fake providers', false)
   .option('--allow-in-repo', 'Allow data dir inside target repo', false)
-  .action(async (prNumber: string, opts) => {
+  .action(async (prNumberInput: string | undefined, opts) => {
+    if (opts.ci && !opts.fake && !hasAvailableVendorKeys()) {
+      process.stdout.write(
+        '::warning::Chayxona review skipped: vendor API secrets are unavailable for fork PRs\n',
+      );
+      process.exitCode = 0;
+      return;
+    }
+
+    const prNumber = resolvePrNumber(prNumberInput);
     const redactor = new SecretRedactor();
     const repo = inspectRepo(process.cwd());
     const pr = fetchGitHubPr(prNumber, repo.repoPath);
@@ -346,11 +363,16 @@ program
       const res = await runNoTuiCommand({ service, kind: 'debate', topic });
       const card = service.exportRoom('pr');
       process.stdout.write(`\n${card}\n`);
-      if (opts.post && res.exitCode !== 1) {
-        postPrReviewComment(prNumber, card, repo.repoPath);
+      if ((opts.post || opts.ci) && res.exitCode !== 1) {
+        postOrUpdatePrReviewComment(prNumber, card, repo.repoPath);
         process.stdout.write(`Posted Chayxona cross-model review comment to PR #${pr.number}.\n`);
       }
-      process.exitCode = res.exitCode;
+      if (opts.ci) {
+        const findings = db.listVisibleFindings(roomId);
+        process.exitCode = res.exitCode === 1 ? 1 : evaluatePrExitCode(findings);
+      } else {
+        process.exitCode = res.exitCode;
+      }
     } finally {
       lock.release();
       db.close();
