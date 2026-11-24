@@ -8,6 +8,9 @@
 - [x] **One-Command Bot Scaffolding (`chayxona init --action`):** Instantly bootstrap `.github/workflows/chayxona-review.yml` into any repo.
 - [x] **Persistent Warm Transports (`WarmTransportPool` & `/warm`):** Session continuity and session ID reuse across Claude Code (`--resume`), Codex (`resume`), and Antigravity (`--resume`).
 - [x] **Local Stdio MCP Room Server (`chayxona mcp`):** Exposes `chayxona_debate`, `chayxona_audit`, and `chayxona_review_pr` tools directly over Model Context Protocol for Cursor, Claude Desktop, and Windsurf.
+- [x] **Animated Terminal Demo & Visual Header:** Created `docs/demo.cast` and razor-sharp `docs/demo.svg` vector preview showcasing side-by-side multi-agent debate in README.
+- [x] **Automated NPM Publish & GitHub Release (`.github/workflows/publish.yml`):** OIDC-backed publishing with cryptographic npm provenance and automated release notes on tag push.
+- [x] **Multi-Format Room Export (`chayxona export [roomId]` & `/export`):** Secret-redacted export supporting standalone dark-mode HTML reports, GitHub PR decision cards, Markdown transcripts, and structured JSONL.
 
 ---
 

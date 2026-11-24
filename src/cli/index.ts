@@ -450,25 +450,38 @@ program
   });
 
 program
-  .command('export <roomId>')
-  .description('Export a secret-redacted room transcript or GitHub PR decision card')
-  .option('--format <fmt>', 'Output format (md | jsonl | pr)', 'md')
+  .command('export [roomId]')
+  .description('Export a secret-redacted room transcript, GitHub PR decision card, or HTML report (default: latest)')
+  .option('--format <fmt>', 'Output format (md | jsonl | pr | html)', 'md')
   .option('--out <path>', 'Write to file path instead of stdout')
-  .action((roomId: string, opts: { format: string; out?: string }) => {
-    const dataDir = resolveDataDir();
-    const db = new ChayxonaDB(path.join(dataDir, 'chayxona.db'));
+  .option('--allow-in-repo', 'Allow writing export file inside the target repo', false)
+  .action((roomIdArg?: string, opts?: { format?: string; out?: string; allowInRepo?: boolean }) => {
+    const cwd = process.cwd();
+    const { db } = openDatabase(cwd, Boolean(opts?.allowInRepo));
     try {
+      let roomId = roomIdArg;
+      if (!roomId || roomId === 'latest') {
+        const rooms = db.listRooms(20);
+        const match = rooms.find((r) => r.repoPath === cwd) ?? rooms[0];
+        if (!match) throw new Error('No rooms found to export. Run `chayxona debate` or `chayxona start` first.');
+        roomId = match.id;
+      }
       const room = db.getRoom(roomId);
       if (!room) throw new Error(`Room "${roomId}" not found.`);
       const redactor = new SecretRedactor();
       const service = new RoomService(room, db, new Map(), redactor);
-      const format: 'md' | 'jsonl' | 'pr' =
-        opts.format === 'jsonl' ? 'jsonl' : opts.format === 'pr' ? 'pr' : 'md';
+      const fmtRaw = opts?.format?.toLowerCase();
+      const format: 'md' | 'jsonl' | 'pr' | 'html' =
+        fmtRaw === 'jsonl' ? 'jsonl' : fmtRaw === 'pr' ? 'pr' : fmtRaw === 'html' ? 'html' : 'md';
       const content = service.exportRoom(format);
-      if (opts.out) {
+      if (opts?.out) {
         const outPath = path.resolve(opts.out);
+        if (!opts?.allowInRepo && isPathInside(outPath, room.repoPath)) {
+          throw new Error(`Refused to write export inside target repo (${outPath}). Re-run with --allow-in-repo to permit writing in repo.`);
+        }
         fs.mkdirSync(path.dirname(outPath), { recursive: true, mode: 0o700 });
         fs.writeFileSync(outPath, content, 'utf8');
+        process.stdout.write(`Exported room ${roomId} (${format}) to ${outPath}\n`);
       } else {
         process.stdout.write(content);
       }

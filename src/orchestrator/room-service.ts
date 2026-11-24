@@ -731,12 +731,117 @@ export class RoomService extends EventEmitter {
 
   /**
    * Exports redacted transcript + findings (strictly respecting the blind visibility gate).
-   * Supports `md`, `jsonl`, and `pr` (GitHub PR comment card with collapsible details).
+   * Supports `md`, `jsonl`, `pr` (GitHub PR comment card), and `html`.
    */
-  exportRoom(format: 'md' | 'jsonl' | 'pr'): string {
+  exportRoom(format: 'md' | 'jsonl' | 'pr' | 'html'): string {
     const messages = this.db.listMessages(this.room.id, { includeSealed: false });
     const findings = this.db.listVisibleFindings(this.room.id);
     const events = this.db.listVisibleEvents(this.room.id);
+
+    if (format === 'html') {
+      const dissents = findings.filter((f) => f.dissentsFrom.length > 0);
+      const blocking = findings.filter((f) => f.severity === 'critical' || f.severity === 'high');
+      const escape = (str: string): string =>
+        str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+
+      const findingsRows = findings
+        .map((f) => {
+          const loc = f.file ? `${escape(f.file)}${f.line ? `:${f.line}` : ''}` : '<em>General</em>';
+          const dissent =
+            f.dissentsFrom.length > 0
+              ? f.dissentsFrom.map((d) => `<span class="tag tag-dissent">${escape(d)}</span>`).join(' ')
+              : '—';
+          return `<tr>
+  <td><span class="badge badge-${escape(f.severity)}">${escape(f.severity.toUpperCase())}</span></td>
+  <td><code>${escape(f.canonicalId)}</code></td>
+  <td>${loc}</td>
+  <td>${escape(f.summary)}</td>
+  <td>${dissent}</td>
+</tr>`;
+        })
+        .join('\n');
+
+      const messagesHtml = messages
+        .map((m) => {
+          const agentClass = m.sender === 'claude' ? 'claude' : m.sender === 'codex' ? 'codex' : m.sender === 'agy' ? 'agy' : 'other';
+          return `<div class="message ${agentClass}">
+  <div class="message-header">
+    <strong>${escape(m.sender.toUpperCase())}</strong>
+    <span class="phase">Round ${m.roundId} · ${escape(m.roundPhase)}</span>
+  </div>
+  <pre class="message-body">${escape(m.body)}</pre>
+</div>`;
+        })
+        .join('\n');
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chayxona Debate — ${escape(this.room.id)}</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0d1117; color: #c9d1d9; max-width: 960px; margin: 40px auto; padding: 0 20px; line-height: 1.6; }
+    h1, h2, h3 { color: #58a6ff; border-bottom: 1px solid #21262d; padding-bottom: 8px; }
+    .meta { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px 16px; margin: 20px 0; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    .badge-critical { background: #b62324; color: #fff; }
+    .badge-high { background: #cf222e; color: #fff; }
+    .badge-medium { background: #d29922; color: #000; }
+    .badge-low { background: #3fb950; color: #000; }
+    .badge-info { background: #58a6ff; color: #000; }
+    .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-family: monospace; }
+    .tag-dissent { background: #490202; color: #f85149; border: 1px solid #da3633; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th, td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; vertical-align: top; }
+    th { background: #161b22; color: #8b949e; font-weight: 600; }
+    tr:nth-child(even) { background: #161b22; }
+    .message { background: #161b22; border-left: 4px solid #58a6ff; border-radius: 0 6px 6px 0; padding: 14px 18px; margin: 18px 0; border: 1px solid #30363d; border-left-width: 4px; }
+    .message.claude { border-left-color: #d97706; }
+    .message.codex { border-left-color: #10b981; }
+    .message.agy { border-left-color: #818cf8; }
+    .message-header { display: flex; justify-content: space-between; margin-bottom: 10px; color: #8b949e; font-size: 13px; }
+    .message-body { background: #0d1117; padding: 12px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; white-space: pre-wrap; word-break: break-word; color: #e6edf3; }
+    code { font-family: monospace; background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Chayxona Debate Report</h1>
+  <div class="meta">
+    <div><strong>Room ID:</strong> <code>${escape(this.room.id)}</code></div>
+    <div><strong>Repository:</strong> <code>${escape(this.room.repoPath)}</code></div>
+    <div><strong>Agents:</strong> ${this.room.agents.map((a) => `<code>${escape(a)}</code>`).join(' ')}</div>
+    <div><strong>Summary:</strong> ${findings.length} findings (${blocking.length} high/critical, ${dissents.length} dissent)</div>
+  </div>
+
+  <h2>Findings &amp; Consensus Matrix</h2>
+  ${findings.length > 0 ? `<table>
+    <thead>
+      <tr>
+        <th>Severity</th>
+        <th>ID</th>
+        <th>Location</th>
+        <th>Summary</th>
+        <th>Dissent</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${findingsRows}
+    </tbody>
+  </table>` : '<p><em>No structured findings reported.</em></p>'}
+
+  <h2>Transcript Timeline</h2>
+  ${messagesHtml}
+</body>
+</html>`;
+      return this.redactor.redact(html + '\n');
+    }
 
     if (format === 'jsonl') {
       const rows = [

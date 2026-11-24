@@ -64,7 +64,7 @@ const HELP_TEXT = [
   '  /pause | /continue       Pause before next round / resume scheduling',
   '  /recover retry|unseal|r2 Recover an interrupted round after resume',
   '  /stop [agent|all]        Cancel active turn(s)',
-  '  /export [md|jsonl|pr] [path] Export redacted transcript or GitHub PR card',
+  '  /export [md|jsonl|pr|html] [path] Export redacted transcript, PR card, or HTML report',
   '  /help | /quit            Show help / exit cleanly',
 ].join('\n');
 
@@ -479,7 +479,7 @@ export const App: React.FC<AppProps> = ({
       return;
     }
     if (cmd.kind === 'export') {
-      const ext = cmd.format === 'jsonl' ? 'jsonl' : 'md';
+      const ext = cmd.format === 'jsonl' ? 'jsonl' : cmd.format === 'html' ? 'html' : 'md';
       const defaultPath = path.join(dataDir, 'exports', `${service.room.id}${cmd.format === 'pr' ? '-pr' : ''}.${ext}`);
       const targetPath = cmd.targetPath ? path.resolve(cmd.targetPath) : defaultPath;
       if (!allowInRepoExport && isPathInside(targetPath, service.room.repoPath)) {

@@ -59,6 +59,11 @@ chayxona debate "Cache-aside Redis vs read replicas" --fake --no-tui
 chayxona debate "Should we split the auth service?" --no-tui
 chayxona audit diff --no-tui
 chayxona pr 42 --post
+
+# Export debate transcripts, GitHub PR cards, or standalone HTML reports
+chayxona export latest --format md
+chayxona export latest --format html --out /tmp/report.html
+chayxona export latest --format pr
 ```
 
 ---

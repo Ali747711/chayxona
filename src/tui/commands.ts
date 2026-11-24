@@ -2,6 +2,8 @@ import { isAgentRole, type AgentRole } from '../domain/roles.js';
 import type { AgentId } from '../domain/types.js';
 import type { AuditMode } from '../orchestrator/git-inspector.js';
 
+export type ExportFormat = 'md' | 'jsonl' | 'pr' | 'html';
+
 export type ParsedCommand =
   | { kind: 'empty' }
   | { kind: 'quit' }
@@ -19,7 +21,7 @@ export type ParsedCommand =
   | { kind: 'recover'; sub: 'retry' | 'unseal' | 'r2' | 'invalid' }
   | { kind: 'stop'; target: AgentId | 'all' }
   | { kind: 'budget'; delta: number }
-  | { kind: 'export'; format: 'md' | 'jsonl' | 'pr'; targetPath?: string }
+  | { kind: 'export'; format: ExportFormat; targetPath?: string }
   | { kind: 'task'; description: string; autoPlan?: boolean }
   | { kind: 'approve'; id?: string }
   | { kind: 'reject'; reason?: string }
@@ -91,9 +93,19 @@ export function parseUserInput(raw: string): ParsedCommand {
 
   if (trimmed === '/export' || trimmed.startsWith('/export ')) {
     const parts = trimmed.split(/\s+/).slice(1);
-    const format: 'md' | 'jsonl' | 'pr' =
-      parts[0] === 'jsonl' ? 'jsonl' : parts[0] === 'pr' ? 'pr' : 'md';
-    return { kind: 'export', format, targetPath: parts[1] };
+    const first = parts[0]?.toLowerCase();
+    let format: ExportFormat = 'md';
+    let targetPath: string | undefined = undefined;
+    if (first === 'jsonl' || first === 'pr' || first === 'html' || first === 'md') {
+      format = first;
+      targetPath = parts[1];
+    } else if (parts[0]) {
+      targetPath = parts[0];
+      if (targetPath.endsWith('.jsonl')) format = 'jsonl';
+      else if (targetPath.endsWith('.html') || targetPath.endsWith('.htm')) format = 'html';
+      else format = 'md';
+    }
+    return { kind: 'export', format, targetPath };
   }
 
   if (trimmed === '/task' || trimmed.startsWith('/task ')) {
