@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - name: Smoke test --fake --no-tui debate
+        env:
+          CHAYXONA_DATA_DIR: ${{ runner.temp }}/chayxona-ci-data
+        run: node --no-warnings=ExperimentalWarning dist/cli/index.js debate "CI smoke topic" --fake --no-tui
